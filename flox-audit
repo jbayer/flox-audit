@@ -2,7 +2,7 @@
 # flox audit: trace a package in a Flox environment back to its source.
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 
 usage() {
   cat <<'EOF'
@@ -99,7 +99,9 @@ for c in "${CACHES[@]}"; do
   SIGNER=$(sed -n 's/^Sig: //p' <<<"$NI" | cut -d: -f1 | paste -sd, -)
   note "$c: signed by $SIGNER"
   if [ -n "$DRV" ] && [ "$DERIVER" != "$(basename "$DRV")" ]; then
-    bad "cache says recipe $DERIVER, lockfile says $(basename "$DRV")"
+    # Not a failure: recipes that differ only in fetch details (e.g. source URLs)
+    # produce the same output path, and the cache remembers whichever was built first.
+    note "cache first built it from $DERIVER (lockfile recipe differs; same output, checked in step 5)"
   else
     ok "cache record names the same recipe as the lockfile"
   fi
@@ -147,8 +149,11 @@ if [ "$KIND" = nixpkgs ]; then
   else
     step "5. Re-evaluate the recipe from the pinned nixpkgs commit"
     EVAL_DRV=$(nixx eval --raw "$REF#$ATTR.drvPath")
-    if [ "$EVAL_DRV" = "$DRV" ]; then ok "$REF#$ATTR gives $(basename "$EVAL_DRV")"
-    else bad "evaluated $EVAL_DRV, lockfile has $DRV"; fi
+    EVAL_OUT=$(nixx eval --raw "$REF#$ATTR.$OUTNAME.outPath")
+    if [ "$EVAL_DRV" = "$DRV" ]; then ok "recipe matches lockfile: $(basename "$EVAL_DRV")"
+    else bad "evaluated recipe $EVAL_DRV, lockfile has $DRV"; fi
+    if [ "$EVAL_OUT" = "$OUT" ]; then ok "recipe produces the exact output that was signed: $(basename "$EVAL_OUT")"
+    else bad "recipe produces $EVAL_OUT, but the signed output is $OUT"; fi
 
     step "6. Re-download the source from upstream and check its hash"
     SRC=$(nixx eval --json "$REF#$ATTR.src" --apply \
