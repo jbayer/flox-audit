@@ -11,7 +11,7 @@ xz.pkg-path = "xz"
 
 [build.flox-audit]
 description = "flox audit: trace a package in a Flox environment back to its signed binary, build recipe and source"
-version = "0.3.0"
+version = "0.3.1"
 command = '''
   mkdir -p $out/bin
   cp flox-audit $out/bin/flox-audit

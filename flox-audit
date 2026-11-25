@@ -2,7 +2,7 @@
 # flox audit: trace a package in a Flox environment back to its source.
 set -euo pipefail
 
-VERSION="0.3.0"
+VERSION="0.3.1"
 
 usage() {
   cat <<'EOF'
@@ -199,12 +199,43 @@ pin_save() {
 }
 short_fpr() { local f=$1; echo "${f:0:4}…${f: -4}"; }
 
+# Check each file in FLOX_AUDIT_GPG_KEYS holds a public key. Prints a plain
+# warning for each one that doesn't.
+check_user_keys() {
+  local k home n
+  IFS=':' read -r -a keyfiles <<<"${FLOX_AUDIT_GPG_KEYS:-}"
+  for k in "${keyfiles[@]}"; do
+    [ -n "$k" ] || continue
+    if [ ! -f "$k" ]; then
+      echo "FLOX_AUDIT_GPG_KEYS: $k doesn't exist, so it was ignored."; continue
+    fi
+    home=$(mktemp -d); chmod 700 "$home"
+    gpg --homedir "$home" --batch --quiet --import "$k" >/dev/null 2>&1 || true
+    n=$(gpg --homedir "$home" --batch --with-colons --list-keys 2>/dev/null | awk -F: '$1=="pub"' | wc -l | tr -d ' ')
+    rm -rf "$home"
+    [ "$n" -gt 0 ] && continue
+    if grep -q 'BEGIN PGP SIGNATURE\|BEGIN PGP SIGNED MESSAGE' "$k" 2>/dev/null; then
+      echo "FLOX_AUDIT_GPG_KEYS: $k is a signature, not a public key, so it was ignored."
+      echo "  A public key file starts with -----BEGIN PGP PUBLIC KEY BLOCK-----."
+    else
+      echo "FLOX_AUDIT_GPG_KEYS: $k has no public key in it, so it was ignored."
+    fi
+  done
+}
+
 # step7 <project> <comma-separated urls> <local source file> <forge:true|false> <flat|recursive>
 step7() {
   local project=$1 urls=$2 src=$3 forge=$4 mode=$5
   step 7 "Did the $project project publish this exact source code?"
   info "Step 6 shows the download hasn't changed since the recipe was written." \
        "This step checks the recipe against what the $project project itself published."
+  local keywarn=""
+  if [ -n "${FLOX_AUDIT_GPG_KEYS:-}" ] && command -v gpg >/dev/null; then
+    keywarn=$(check_user_keys)
+    [ -n "$keywarn" ] && while IFS= read -r l; do
+      case "$l" in "  "*) info "      ${l#  }" ;; *) info "Note: $l" ;; esac
+    done <<<"$keywarn"
+  fi
 
   if [ "$forge" = true ]; then
     cant "The source is an archive GitHub generated, not a file the $project project published." \
@@ -278,6 +309,12 @@ step7() {
     if [ -n "${FLOX_AUDIT_GPG_KEYS:-}" ]; then
       verify_with "$FLOX_AUDIT_GPG_KEYS"
       [[ $r == GOOD* ]] && how=yours
+      if [[ $r == UNKNOWN* ]]; then
+        local nxt="flox audit looked for the key online instead."
+        [ "$KEY_FETCH" = 1 ] || nxt="Looking up keys online is turned off, so it can't be checked."
+        info "Note: none of the keys in FLOX_AUDIT_GPG_KEYS made this signature" \
+             "      (it was made by key ${r#UNKNOWN }). $nxt"
+      fi
     fi
     if [ -z "$how" ] && [[ $r != BAD && $r != NOTLISTED ]] && [ "$KEY_FETCH" = 1 ]; then
       issuer=$(sig_issuer_fpr "$signedfile")
