@@ -2,7 +2,7 @@
 # flox audit: trace a package in a Flox environment back to its source.
 set -euo pipefail
 
-VERSION="0.3.1"
+VERSION="0.3.2"
 
 usage() {
   cat <<'EOF'
@@ -140,10 +140,21 @@ key_has_fpr() {
   rm -rf "$home"; return $rc
 }
 
+# The GitHub owner and repository of a release download, as "owner/repo".
+github_release_repo() {
+  case "$1" in https://github.com/*/*/releases/download/*)
+    local p=${1#https://github.com/}; echo "${p%%/releases/*}" ;;
+  esac
+}
+
 # Look for a published key with this exact fingerprint.
-# Writes the key to <out> and prints "<strength>|<where it came from>", where
-# strength is "project" (the project's own site) or "directory" (a public key
-# directory anyone can upload to). Returns 1 if no matching key was found.
+# Writes the key to <out> and prints "<kind>|<name>|<location>|<owner>", where
+# kind says how far the key's source is from the download:
+#   separate    a curated keyring kept apart from the download server
+#   sameserver  a curated keyring on the same server as the download
+#   samerepo    the project's own repository, where the download is also hosted
+#   directory   a public key directory anyone can upload to
+# Returns 1 if no matching key was found.
 fetch_key() {
   local fpr=$1 out=$2 url=$3 t
   t=$(mktemp)
@@ -151,18 +162,61 @@ fetch_key() {
   case "$url" in https://ftp.gnu.org/gnu/*)
     if curl -sfL --max-time 30 -o "$t" https://ftp.gnu.org/gnu/gnu-keyring.gpg 2>/dev/null \
        && key_has_fpr "$t" "$fpr"; then
-      mv "$t" "$out"; echo "project|the GNU project's keyring (ftp.gnu.org/gnu/gnu-keyring.gpg)"; return 0
+      mv "$t" "$out"; echo "sameserver|the GNU project's keyring|ftp.gnu.org/gnu/gnu-keyring.gpg|GNU"; return 0
     fi ;;
   esac
+  # Some projects keep their release keys in a sig/ folder of their GitHub
+  # repository (jq does), next to the release downloads.
+  local repo k
+  repo=$(github_release_repo "$url")
+  if [ -n "$repo" ]; then
+    for k in $(curl -sf --max-time 20 "https://api.github.com/repos/$repo/contents/sig" 2>/dev/null \
+               | jq -r '.[]? | select(.type=="file") | .name | select(test("\\.(key|asc|gpg|pub)$"))' 2>/dev/null); do
+      if curl -sfL --max-time 20 -o "$t" "https://raw.githubusercontent.com/$repo/HEAD/sig/$k" 2>/dev/null \
+         && key_has_fpr "$t" "$fpr"; then
+        mv "$t" "$out"; echo "samerepo|the project's own repository|github.com/$repo (sig/$k)|${repo%%/*} GitHub account"; return 0
+      fi
+    done
+  fi
+  local found=""
   if curl -sf --max-time 20 -o "$t" "https://keys.openpgp.org/vks/v1/by-fingerprint/$fpr" 2>/dev/null \
      && key_has_fpr "$t" "$fpr"; then
-    mv "$t" "$out"; echo "directory|keys.openpgp.org"; return 0
-  fi
-  if curl -sf --max-time 20 -o "$t" "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x$fpr" 2>/dev/null \
+    found="directory|keys.openpgp.org|keys.openpgp.org|"
+  elif curl -sf --max-time 20 -o "$t" "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x$fpr" 2>/dev/null \
      && key_has_fpr "$t" "$fpr"; then
-    mv "$t" "$out"; echo "directory|keyserver.ubuntu.com"; return 0
+    found="directory|keyserver.ubuntu.com|keyserver.ubuntu.com|"
   fi
+  # kernel.org keeps a keyring of everyone who signs releases there (git,
+  # util-linux, the kernel, ...), one file per key, named by the primary key's
+  # long ID. Releases are often signed with a subkey, so the directory copy (if
+  # any) tells us the primary key; the kernel.org file must itself hold <fpr>.
+  case "$url" in https://*.kernel.org/pub/*)
+    local id k
+    k=$(mktemp)
+    for id in "${fpr: -16}" $([ -n "$found" ] && primary_id_of "$t" "$fpr"); do
+      if curl -sfL --max-time 30 -o "$k" \
+           "https://git.kernel.org/pub/scm/docs/kernel/pgpkeys.git/plain/keys/$id.asc" 2>/dev/null \
+         && key_has_fpr "$k" "$fpr"; then
+        mv "$k" "$out"; rm -f "$t"
+        echo "separate|kernel.org's keyring of release signers|git.kernel.org/pub/scm/docs/kernel/pgpkeys.git|kernel.org"
+        return 0
+      fi
+    done
+    rm -f "$k" ;;
+  esac
+  if [ -n "$found" ]; then mv "$t" "$out"; echo "$found"; return 0; fi
   rm -f "$t"; return 1
+}
+
+# The long key ID of the primary key that owns key (or subkey) <fpr> in <file>.
+primary_id_of() {
+  local file=$1 fpr=$2 home
+  home=$(mktemp -d); chmod 700 "$home"
+  gpg --homedir "$home" --batch --quiet --import "$file" >/dev/null 2>&1 || true
+  gpg --homedir "$home" --batch --with-colons --list-keys 2>/dev/null \
+    | awk -F: -v f="$fpr" '$1=="pub" {p=""; want=1} $1=="sub" {want=0}
+                           $1=="fpr" && want {p=$10; want=0} $1=="fpr" && $10==f && p!="" && p!=f {print substr(p, length(p)-15); exit}'
+  rm -rf "$home"
 }
 
 # Web Key Directory: is the same key published on the signer's own email domain?
@@ -192,12 +246,13 @@ wkd_confirms() {
 
 # Signing keys seen on earlier audits: "<project> <primary fingerprint> <date>".
 known_keys_file() { echo "${FLOX_AUDIT_KNOWN_KEYS:-${XDG_CONFIG_HOME:-$HOME/.config}/flox-audit/known-keys}"; }
-pin_get() { local f; f=$(known_keys_file); [ -f "$f" ] && awk -v p="$1" '$1==p {print $2}' "$f" | tail -1 || true; }
+# Prints "<fingerprint> <date>" for the project's most recent key, if any.
+pin_get() { local f; f=$(known_keys_file); [ -f "$f" ] && awk -v p="$1" '$1==p {print $2, $3}' "$f" | tail -1 || true; }
 pin_save() {
   local f; f=$(known_keys_file)
   mkdir -p "$(dirname "$f")" 2>/dev/null && printf '%s %s %s\n' "$1" "$2" "$(date +%Y-%m-%d)" >>"$f" 2>/dev/null || true
 }
-short_fpr() { local f=$1; echo "${f:0:4}…${f: -4}"; }
+short_fpr() { local f=$1; echo "${f:0:8}...${f: -8}"; }
 
 # Check each file in FLOX_AUDIT_GPG_KEYS holds a public key. Prints a plain
 # warning for each one that doesn't.
@@ -227,8 +282,9 @@ check_user_keys() {
 step7() {
   local project=$1 urls=$2 src=$3 forge=$4 mode=$5
   step 7 "Did the $project project publish this exact source code?"
-  info "Step 6 shows the download hasn't changed since the recipe was written." \
-       "This step checks the recipe against what the $project project itself published."
+  info "Step 6 showed the source hasn't changed since the recipe was written. This step" \
+       "checks it against what the $project project released, which also catches a recipe" \
+       "that recorded the wrong file to begin with."
   local keywarn=""
   if [ -n "${FLOX_AUDIT_GPG_KEYS:-}" ] && command -v gpg >/dev/null; then
     keywarn=$(check_user_keys)
@@ -275,6 +331,19 @@ step7() {
   for c in "$url.asc" "$url.sig"; do
     fetch_side "$c" "$tmp/sig" && { sig=$tmp/sig; sigurl=$c; break; }
   done
+  # Some projects keep release signatures in a sig/ folder of their GitHub
+  # repository instead of attaching them to the release (jq: sig/v1.8.2/).
+  local repo tag
+  repo=$(github_release_repo "$url")
+  if [ -z "$sig" ] && [ -n "$repo" ]; then
+    tag=${url#*/releases/download/}; tag=${tag%%/*}
+    local ver=$tag
+    while [ -n "$ver" ] && [[ $ver != [0-9]* ]]; do ver=${ver#?}; done
+    for c in "sig/$tag/$file.asc" ${ver:+"sig/v$ver/$file.asc"} ${ver:+"sig/$ver/$file.asc"}; do
+      fetch_side "https://raw.githubusercontent.com/$repo/HEAD/$c" "$tmp/sig" \
+        && { sig=$tmp/sig; sigurl="https://github.com/$repo/blob/HEAD/$c"; break; }
+    done
+  fi
   fetch_side "$dir/$base.sign" "$tmp/raw.sign" && { rawsign=$tmp/raw.sign; rawsignurl=$dir/$base.sign; }
   for c in "$dir/SHASUMS256.txt.asc" "$dir/SHA256SUMS.asc"; do
     fetch_side "$c" "$tmp/sums.asc" && { signsum=$tmp/sums.asc; signsumurl=$c; break; }
@@ -340,46 +409,87 @@ step7() {
     rm -rf "$tmp"; return
   fi
   if [[ $r == GOOD* ]]; then
-    local rest=${r#GOOD } sfpr pfpr name pinned
+    local rest=${r#GOOD } sfpr pfpr name pin pinned pindate
     sfpr=${rest%% *}; rest=${rest#* }; pfpr=${rest%% *}; name=${rest#* }
     [ "$name" = "$pfpr" ] && name=""
-    pinned=$(pin_get "$project")
+    pin=$(pin_get "$project"); pinned=${pin%% *}; pindate=${pin#"$pinned"}; pindate=${pindate# }
     if [ -n "$pinned" ] && [ "$pinned" != "$pfpr" ]; then
       fail "The $project project's signing key has changed since an earlier audit." \
-           "Earlier: $pinned" \
+           "Earlier: $pinned${pindate:+ (seen $pindate)}" \
            "Now:     $pfpr (${name:-unknown name})" \
            "This can be a planned key change or a sign of tampering. Check the project's" \
            "announcements, then remove the old line from $(known_keys_file) if it's expected." \
            "Signature: $signedurl"
       rm -rf "$tmp"; return
     fi
-    local seen=""
-    [ -n "$pinned" ] && seen="It's the same key flox audit saw for $project on an earlier run."
-    [ -z "$pinned" ] && pin_save "$project" "$pfpr"
-    if [ "$how" = yours ]; then
-      pass "Yes. The $project project's signature is valid, using a key you chose to trust." \
-           "Signed by: ${name:-unknown name} (key $pfpr)" \
-           ${seen:+"$seen"} "Signature: $signedurl"
-    elif [ "$strength" = project ] || [ -n "$wkd" ]; then
-      local where=$from
-      [ -n "$wkd" ] && where="$from. The same key is published at $wkd, the signer's own domain"
-      local head="a key from the project's own site"
-      [ "$strength" = project ] || head="a key the signer also publishes on their own domain"
-      pass "Yes. The $project project's signature is valid, using $head." \
-           "Signed by: ${name:-unknown name} (key $pfpr)" \
-           "The key came from $where." \
-           "flox audit found this key itself; you haven't confirmed it. Someone who controlled" \
-           "that site could replace both the download and the key." \
-           ${seen:+"$seen"} "Signature: $signedurl"
+    local -a seen
+    if [ -n "$pinned" ]; then
+      seen=("Same key as on an earlier run${pindate:+ ($pindate)}, so it hasn't been"
+            "  swapped since then.")
     else
-      weakpass "The source is signed by \"${name:-unknown name}\", using a key from a public directory." \
-               "Key $pfpr came from $from," \
-               "where anyone can upload a key under any name." \
-               "So this shows the release was signed and not changed since, but not that the" \
-               "$project project made the signature." \
-               ${seen:+"$seen"} \
-               "To confirm it, get the project's key from its own website and run again with" \
-               "FLOX_AUDIT_GPG_KEYS=/path/to/key.asc. Signature: $signedurl"
+      seen=("First time flox audit has seen the $project project's key. Later runs"
+            "  will flag it if the key changes.")
+      pin_save "$project" "$pfpr"
+    fi
+    local signer="Signed by: ${name:-unknown name} (key $(short_fpr "$pfpr"))"
+    # fetch_key's "<name>|<location>|<owner>" (kind already split off).
+    local kname=${from%%|*} rest2=${from#*|} kloc kowner
+    kloc=${rest2%%|*}; kowner=${rest2#*|}
+    local -a body=()
+    if [ "$how" = yours ]; then
+      body=("Yes. The $project project signed this source, using a key you supplied."
+            "$signer"
+            "You got this key yourself, so someone who took over the download site"
+            "couldn't have swapped it, as long as you got it through a channel they"
+            "don't control.")
+    elif [ "$strength" = separate ]; then
+      body=("Yes. The $project project signed this source, using a key from a keyring kept"
+            "separately from the download server."
+            "$signer"
+            "Key source: $kname"
+            "  ($kloc)"
+            "Protects against: someone who takes over the download server. They would"
+            "  also need to change the keyring, which $kowner's admins keep separately."
+            "Doesn't protect against: someone who controls $kowner itself.")
+    elif [ "$strength" = sameserver ]; then
+      body=("Yes. The $project project signed this source, using a key from"
+            "$kname."
+            "$signer"
+            "Key source: $kloc"
+            "Protects against: changes on mirrors or during download, and a release"
+            "  signed by someone $kowner hasn't listed as a maintainer."
+            "Doesn't protect against: someone who takes over ${kloc%%/*}. The keyring"
+            "  is on the same server as the download, so they could replace both.")
+    elif [ "$strength" = samerepo ]; then
+      body=("Yes. The $project project signed this source, using a key from the project's"
+            "own repository."
+            "$signer"
+            "Key source: $kloc"
+            "Protects against: changes on mirrors or during download."
+            "Doesn't protect against: someone who takes over the $kowner."
+            "  The key, the signature and the download are all there, so they could"
+            "  replace all three.")
+    elif [ -n "$wkd" ]; then
+      body=("Yes. The $project project signed this source, using a key the signer publishes"
+            "on their own domain."
+            "$signer"
+            "Key source: $kloc, and the same key is published at"
+            "  $wkd (the signer's email domain)"
+            "Protects against: someone who takes over only the download site, or who"
+            "  uploads a fake key to a public directory."
+            "Doesn't protect against: someone who controls $wkd.")
+    fi
+    if [ ${#body[@]} -gt 0 ]; then
+      pass "${body[@]}" "${seen[@]}" "Key fingerprint: $pfpr" "Signature: $signedurl"
+    else
+      weakpass "The source is signed by \"${name:-unknown name}\", but nobody vouches for the key." \
+               "Key source: $kloc, where anyone can upload a key under any name." \
+               "Shows: the file hasn't changed since it was signed." \
+               "Doesn't show: that the $project project made the signature." \
+               "${seen[@]}" \
+               "To check it properly, get the key from the project and run again with" \
+               "  FLOX_AUDIT_GPG_KEYS=/path/to/key.asc" \
+               "Key fingerprint: $pfpr" "Signature: $signedurl"
     fi
     rm -rf "$tmp"; return
   fi
@@ -387,11 +497,12 @@ step7() {
   # 2. A checksum file on the same server: a weaker check.
   if [ -n "$sums" ]; then
     if grep -qi -e "$sha256" -e "$sha512" "$sums"; then
-      pass "Yes, by a weaker check: the source matches the checksum the $project project posted." \
+      pass "Yes, by a weaker check: the source matches the checksum the $project project posted" \
+           "next to the download." \
            "Checksum: $sumsurl" \
-           "This catches download and packaging mistakes. It's a weaker check than a" \
-           "signature: anyone who could change the download on that server could change" \
-           "this checksum too."
+           "Protects against: download and packaging mistakes." \
+           "Doesn't protect against: anyone who could change the download. They could" \
+           "  change this checksum too."
     elif grep -q -- "$file" "$sums"; then
       fail "The checksum the $project project posted does NOT match this source." \
            "Checksum for $file: $sumsurl"
@@ -626,7 +737,7 @@ main() {
   echo
   echo "Summary: $PNAME $PVER"
   echo "   $PASSED passed$([ "$WEAK" -gt 0 ] && echo " ($WEAK weak)"), $FAILED failed, $NOTCHK not checked, $CANT can't check"
-  local l; for l in "${SUMMARY[@]}"; do echo "   $l"; done
+  local l; for l in ${SUMMARY[@]+"${SUMMARY[@]}"}; do echo "   $l"; done
   [ "$FAILED" = 0 ]
 }
 

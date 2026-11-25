@@ -129,14 +129,24 @@ A package published to a catalog was built on the publisher's machine or CI. To 
 
 ## Step 7: the project's own release
 
-Step 6 proves the source hasn't changed since the nixpkgs recipe was written. Step 7 asks a different question: is that source what the project itself released? It uses the strongest evidence it can find:
+Step 6 proves the source hasn't changed since the nixpkgs recipe was written. It can't tell whether the file was already wrong when the recipe was written: a compromised release server at that moment, or a recipe that pointed at the wrong file. Step 7 asks a different question: is that source what the project itself released?
+
+A signature is only as good as the reason to believe the key belongs to the project. If the download, the signature and the key all come from one place, whoever controls that place can replace all three. So step 7 says where the key came from, what that protects against, and what it doesn't. From strongest to weakest:
+
+| Result | Where the key came from | Protects against | Doesn't protect against |
+|---|---|---|---|
+| `PASS`, "a key you supplied" | `FLOX_AUDIT_GPG_KEYS`, a key you got yourself | Someone who took over the download site, as long as you got the key through a channel they don't control | Nothing on the project's side; it's as good as the way you got the key |
+| `PASS`, "a keyring kept separately from the download server" | A curated keyring on a different system, such as kernel.org's keyring of release signers (git and other kernel.org releases) | Someone who takes over the download server | Someone who controls the keyring's operator (kernel.org) |
+| `PASS`, "a key the signer publishes on their own domain" | A public key directory, confirmed by the signer's own email domain through a Web Key Directory (xz, via tukaani.org) | Someone who takes over only the download site, or who uploads a fake key to a directory | Someone who controls the signer's domain |
+| `PASS`, "a key from the GNU project's keyring" | A curated keyring on the same server as the download (ftp.gnu.org) | Changes on mirrors or during download, and releases signed by someone the project hasn't listed | Someone who takes over that server |
+| `PASS`, "a key from the project's own repository" | The project's GitHub repository, where the release is also hosted (jq keeps its signatures and key in `sig/`) | Changes on mirrors or during download | Someone who takes over the GitHub account |
+| `PASS (weak)` | Only a public key directory (keys.openpgp.org or keyserver.ubuntu.com), where anyone can upload a key under any name | Shows the file hasn't changed since it was signed | Doesn't show who signed it |
+| `PASS`, "by a weaker check" | No signature; a checksum file posted next to the download | Download and packaging mistakes | Anyone who could change the download, since they could change the checksum too |
+
+The other results:
 
 | Result | What it means |
 |---|---|
-| `PASS` with a key you chose | The project's signature is valid, using a key you supplied in `FLOX_AUDIT_GPG_KEYS`. The strongest check. |
-| `PASS` with a key from the project's site | `flox audit` found the signing key on the project's own site (for example the GNU keyring), or the signer publishes the same key on their own domain through a Web Key Directory. Good evidence, but someone who controlled that site could replace both the download and the key. |
-| `PASS (weak)` | The release is signed, but the key only came from a public key directory (keys.openpgp.org or keyserver.ubuntu.com), where anyone can upload a key under any name. It shows the file hasn't changed since it was signed, not who signed it. |
-| `PASS`, "by a weaker check" | The source matches a checksum file the project posted on the same server. Catches mistakes, not a compromised server. |
 | `FAIL` | The signature or checksum doesn't match, the project's signed checksum list doesn't include this file, or the signing key changed since an earlier audit. |
 | `NOT CHECKED` | The release is signed but no key could be found, or the signature names only a short key ID, which isn't safe to look up. |
 | `CAN'T CHECK` | The source is an archive GitHub generated (the project never published those exact bytes), or the project published no checksum or signature. |
@@ -162,12 +172,14 @@ The first time `flox audit` sees a valid signature for a project, it saves the s
 
 We sampled 105 common packages from nixos-25.11. About half (50) publish a signed release tarball. Without any keys supplied:
 
-- 23 matched a key on the project's own site (all the GNU packages, through the GNU keyring)
+- 23 matched a key in the GNU project's keyring (all the GNU packages)
 - 1 matched through the signer's own domain (xz, via tukaani.org)
 - 21 found the key only in a public directory (`PASS (weak)`), including curl, openssl, openssh, git, python3, zlib and nginx
 - 5 can't be looked up safely because the signature names only a short key ID (cargo, rustc, file, flex, nmap)
 
 Most of the rest are GitHub-generated archives, which step 7 can't check.
+
+These counts are from before 0.3.2. Since then, releases hosted on kernel.org (git among them) get their key from kernel.org's keyring of release signers, so they pass with a keyring kept separately from the download server instead of `PASS (weak)`. jq's signature and key are now found in its own repository, so it passes with a signature instead of only a checksum.
 
 ## Reading the output
 

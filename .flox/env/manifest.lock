@@ -38,7 +38,7 @@
           "gnupg",
           "xz"
         ],
-        "version": "0.3.0",
+        "version": "0.3.2",
         "description": "flox audit: trace a package in a Flox environment back to its signed binary, build recipe and source"
       }
     }
