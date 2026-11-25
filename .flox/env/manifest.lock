@@ -3,9 +3,6 @@
   "manifest": {
     "schema-version": "1.10.0",
     "install": {
-      "bash": {
-        "pkg-path": "bash"
-      },
       "coreutils": {
         "pkg-path": "coreutils"
       },
@@ -27,134 +24,18 @@
       "flox-audit": {
         "command": "  mkdir -p $out/bin\n  cp flox-audit $out/bin/flox-audit\n  chmod +x $out/bin/flox-audit\n",
         "runtime-packages": [
-          "bash",
           "coreutils",
           "gnused",
           "jq",
           "curl",
           "git"
         ],
-        "version": "0.1.2",
+        "version": "0.1.3",
         "description": "flox audit: trace a package in a Flox environment back to its signed binary, build recipe and source"
       }
     }
   },
   "packages": [
-    {
-      "attr_path": "bash",
-      "broken": false,
-      "derivation": "/nix/store/wifdp1nq4s3ivlfdv3yan6laca5sxpj7-bash-interactive-5.3p20.drv",
-      "description": "GNU Bourne-Again Shell, the de facto standard shell on Linux (for interactive use)",
-      "install_id": "bash",
-      "license": "GPL-3.0-or-later",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
-      "name": "bash-interactive-5.3p20",
-      "pname": "bash",
-      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
-      "rev_count": 1125864,
-      "rev_date": "2026-11-21T04:16:29Z",
-      "scrape_date": "2026-11-22T05:47:30.482569Z",
-      "stabilities": [
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "5.3p20",
-      "outputs_to_install": [
-        "man",
-        "man",
-        "out",
-        "out",
-        "out"
-      ],
-      "outputs": {
-        "dev": "/nix/store/xymwlnl7clwdzp4cniaai5dbibq8dvr3-bash-interactive-5.3p20-dev",
-        "doc": "/nix/store/w5kzxppakb0i6g9wrbbiwdixycc16lhj-bash-interactive-5.3p20-doc",
-        "info": "/nix/store/4y8vrg7d09aja2jk1ipcs2hr428v7x5b-bash-interactive-5.3p20-info",
-        "man": "/nix/store/707kml2xwx5hmgvky0936jbzzc9m0a2l-bash-interactive-5.3p20-man",
-        "out": "/nix/store/16imcy0hiwbc3c6j2n0cn17a6z1mncd5-bash-interactive-5.3p20"
-      },
-      "system": "aarch64-darwin",
-      "group": "toplevel",
-      "priority": 5
-    },
-    {
-      "attr_path": "bash",
-      "broken": false,
-      "derivation": "/nix/store/gnc31d0jprh9v7rjq6k8n6nnwva57v22-bash-interactive-5.3p20.drv",
-      "description": "GNU Bourne-Again Shell, the de facto standard shell on Linux (for interactive use)",
-      "install_id": "bash",
-      "license": "GPL-3.0-or-later",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
-      "name": "bash-interactive-5.3p20",
-      "pname": "bash",
-      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
-      "rev_count": 1125864,
-      "rev_date": "2026-11-21T04:16:29Z",
-      "scrape_date": "2026-11-22T06:13:34.276270Z",
-      "stabilities": [
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "5.3p20",
-      "outputs_to_install": [
-        "man",
-        "man",
-        "out",
-        "out",
-        "out",
-        "out"
-      ],
-      "outputs": {
-        "debug": "/nix/store/alzsk1hrys02lv83w0jhx706c3i9bs6p-bash-interactive-5.3p20-debug",
-        "dev": "/nix/store/1fyngphwizrqdykdynz8p5fr6b4mnp1d-bash-interactive-5.3p20-dev",
-        "doc": "/nix/store/pnc507jbjz4g8v12jh5a85p15vcl9v2c-bash-interactive-5.3p20-doc",
-        "info": "/nix/store/h8ibb69i6lf853hdnb2051hh63720sw5-bash-interactive-5.3p20-info",
-        "man": "/nix/store/4lx7m369lp1y5xn0y2lnbhlxqrdd743s-bash-interactive-5.3p20-man",
-        "out": "/nix/store/x5b3k5pnynrjijw5bzvqrcbdhi5p81d3-bash-interactive-5.3p20"
-      },
-      "system": "aarch64-linux",
-      "group": "toplevel",
-      "priority": 5
-    },
-    {
-      "attr_path": "bash",
-      "broken": false,
-      "derivation": "/nix/store/kflvs7jxvlz0ipa80jxkn0dpgngnn53s-bash-interactive-5.3p20.drv",
-      "description": "GNU Bourne-Again Shell, the de facto standard shell on Linux (for interactive use)",
-      "install_id": "bash",
-      "license": "GPL-3.0-or-later",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
-      "name": "bash-interactive-5.3p20",
-      "pname": "bash",
-      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
-      "rev_count": 1125864,
-      "rev_date": "2026-11-21T04:16:29Z",
-      "scrape_date": "2026-11-22T06:41:47.735545Z",
-      "stabilities": [
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "5.3p20",
-      "outputs_to_install": [
-        "man",
-        "man",
-        "out",
-        "out",
-        "out",
-        "out"
-      ],
-      "outputs": {
-        "debug": "/nix/store/xibk76z2wy0xbr80rc5xvkfx2kc3f96h-bash-interactive-5.3p20-debug",
-        "dev": "/nix/store/07pismcxcb118acfjxq9kkiqvbrkry43-bash-interactive-5.3p20-dev",
-        "doc": "/nix/store/nsa9047yhdx1brxqrxsh9as4ak8nivcf-bash-interactive-5.3p20-doc",
-        "info": "/nix/store/wwy2y2jckfn1a0g97xl635qsck24ic0p-bash-interactive-5.3p20-info",
-        "man": "/nix/store/fvmqqdaz8fsccyvjfma0s76aivfpm9sq-bash-interactive-5.3p20-man",
-        "out": "/nix/store/lfm00fnq66xfgbn099vqckabyl5jllz6-bash-interactive-5.3p20"
-      },
-      "system": "x86_64-linux",
-      "group": "toplevel",
-      "priority": 5
-    },
     {
       "attr_path": "coreutils",
       "broken": false,

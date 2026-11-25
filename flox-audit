@@ -2,7 +2,7 @@
 # flox audit: trace a package in a Flox environment back to its source.
 set -euo pipefail
 
-VERSION="0.1.2"
+VERSION="0.1.3"
 
 usage() {
   cat <<'EOF'
