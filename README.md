@@ -23,24 +23,34 @@ Tested on macOS (aarch64-darwin) and Ubuntu 24.04 (aarch64-linux).
 
 ## Install
 
-### Build from source
+Clone the repository and build it with Flox:
 
 ```sh
 git clone https://github.com/jbayer/flox-audit
 cd flox-audit
 flox build
+```
+
+The build puts the command in `result-flox-audit/bin` inside your clone. Add that folder to your PATH:
+
+```sh
 export PATH="$PWD/result-flox-audit/bin:$PATH"
 ```
 
-### From a Flox catalog
-
-Not published yet. Once it is:
+To have it in every new shell, add the same line to your shell profile (`~/.zshrc` or `~/.bashrc`) with the full path to your clone, for example:
 
 ```sh
-flox install <owner>/flox-audit
+export PATH="$HOME/src/flox-audit/result-flox-audit/bin:$PATH"
 ```
 
-Install it into your default environment to have `flox audit` available everywhere.
+To update, pull and build again:
+
+```sh
+git pull
+flox build
+```
+
+Changing into the clone may ask whether to auto-activate its Flox environment. You don't need to: the environment is only used to build `flox-audit`. Answer `n`, or run `flox activate deny` in the clone to stop being asked.
 
 ## Turn on beta features
 
