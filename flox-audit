@@ -2,7 +2,7 @@
 # flox audit: trace a package in a Flox environment back to its source.
 set -euo pipefail
 
-VERSION="0.1.1"
+VERSION="0.1.2"
 
 usage() {
   cat <<'EOF'
@@ -45,6 +45,12 @@ done
 for tool in nix jq curl; do
   command -v "$tool" >/dev/null || { echo "flox audit: '$tool' not found on PATH" >&2; exit 2; }
 done
+# Nix comes from the host so it matches the local Nix daemon. 'nix hash convert' needs 2.19+.
+MIN_NIX="2.19"
+NIX_VER=$(nix --version | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+if [ "$(printf '%s\n%s\n' "$MIN_NIX" "$NIX_VER" | sort -V | head -1)" != "$MIN_NIX" ]; then
+  echo "flox audit: needs Nix $MIN_NIX or newer (found ${NIX_VER:-unknown})" >&2; exit 2
+fi
 nixx() { nix --extra-experimental-features 'nix-command flakes' "$@"; }
 
 if [ -n "$REMOTE" ]; then
@@ -96,7 +102,7 @@ for c in "${CACHES[@]}"; do
   NI=$(curl -sf "$c/$HASHPART.narinfo" || true)
   [ -n "$NI" ] || continue
   DERIVER=$(sed -n 's/^Deriver: //p' <<<"$NI")
-  SIGNER=$(sed -n 's/^Sig: //p' <<<"$NI" | cut -d: -f1 | paste -sd, -)
+  SIGNER=$(sed -n 's/^Sig: //p' <<<"$NI" | cut -d: -f1 | paste -sd, - | sed 's/,/, /g')
   note "$c: signed by $SIGNER"
   if [ -n "$DRV" ] && [ "$DERIVER" != "$(basename "$DRV")" ]; then
     # Not a failure: recipes that differ only in fetch details (e.g. source URLs)
@@ -108,7 +114,9 @@ for c in "${CACHES[@]}"; do
   [ -n "$SERVED_BY" ] || SERVED_BY="$c"
 done
 if nixx path-info "$OUT" >/dev/null 2>&1; then
-  LOCAL_SIGS=$(nixx path-info --json "$OUT" | jq -r '[.. | .signatures? // empty | .[]] | map(split(":")[0]) | unique | join(", ")')
+  # Plain-text output: the --json format differs across Nix versions.
+  LOCAL_SIGS=$(nixx path-info --sigs "$OUT" | awk '{for (i = 2; i <= NF; i++) print $i}' \
+    | cut -d: -f1 | sort -u | paste -sd, - | sed 's/,/, /g')
   note "local copy: signed by ${LOCAL_SIGS:-nobody}"
 fi
 [ -n "$SERVED_BY" ] || note "not on the public caches (expected for packages published to a Flox catalog)"

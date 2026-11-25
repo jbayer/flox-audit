@@ -3,11 +3,20 @@
   "manifest": {
     "schema-version": "1.10.0",
     "install": {
+      "bash": {
+        "pkg-path": "bash"
+      },
+      "coreutils": {
+        "pkg-path": "coreutils"
+      },
       "curl": {
         "pkg-path": "curl"
       },
       "git": {
         "pkg-path": "git"
+      },
+      "gnused": {
+        "pkg-path": "gnused"
       },
       "jq": {
         "pkg-path": "jq"
@@ -18,16 +27,237 @@
       "flox-audit": {
         "command": "  mkdir -p $out/bin\n  cp flox-audit $out/bin/flox-audit\n  chmod +x $out/bin/flox-audit\n",
         "runtime-packages": [
+          "bash",
+          "coreutils",
+          "gnused",
           "jq",
           "curl",
           "git"
         ],
-        "version": "0.1.0",
+        "version": "0.1.2",
         "description": "flox audit: trace a package in a Flox environment back to its signed binary, build recipe and source"
       }
     }
   },
   "packages": [
+    {
+      "attr_path": "bash",
+      "broken": false,
+      "derivation": "/nix/store/wifdp1nq4s3ivlfdv3yan6laca5sxpj7-bash-interactive-5.3p20.drv",
+      "description": "GNU Bourne-Again Shell, the de facto standard shell on Linux (for interactive use)",
+      "install_id": "bash",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "bash-interactive-5.3p20",
+      "pname": "bash",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T05:47:30.482569Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "5.3p20",
+      "outputs_to_install": [
+        "man",
+        "man",
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "dev": "/nix/store/xymwlnl7clwdzp4cniaai5dbibq8dvr3-bash-interactive-5.3p20-dev",
+        "doc": "/nix/store/w5kzxppakb0i6g9wrbbiwdixycc16lhj-bash-interactive-5.3p20-doc",
+        "info": "/nix/store/4y8vrg7d09aja2jk1ipcs2hr428v7x5b-bash-interactive-5.3p20-info",
+        "man": "/nix/store/707kml2xwx5hmgvky0936jbzzc9m0a2l-bash-interactive-5.3p20-man",
+        "out": "/nix/store/16imcy0hiwbc3c6j2n0cn17a6z1mncd5-bash-interactive-5.3p20"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "bash",
+      "broken": false,
+      "derivation": "/nix/store/gnc31d0jprh9v7rjq6k8n6nnwva57v22-bash-interactive-5.3p20.drv",
+      "description": "GNU Bourne-Again Shell, the de facto standard shell on Linux (for interactive use)",
+      "install_id": "bash",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "bash-interactive-5.3p20",
+      "pname": "bash",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:13:34.276270Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "5.3p20",
+      "outputs_to_install": [
+        "man",
+        "man",
+        "out",
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "debug": "/nix/store/alzsk1hrys02lv83w0jhx706c3i9bs6p-bash-interactive-5.3p20-debug",
+        "dev": "/nix/store/1fyngphwizrqdykdynz8p5fr6b4mnp1d-bash-interactive-5.3p20-dev",
+        "doc": "/nix/store/pnc507jbjz4g8v12jh5a85p15vcl9v2c-bash-interactive-5.3p20-doc",
+        "info": "/nix/store/h8ibb69i6lf853hdnb2051hh63720sw5-bash-interactive-5.3p20-info",
+        "man": "/nix/store/4lx7m369lp1y5xn0y2lnbhlxqrdd743s-bash-interactive-5.3p20-man",
+        "out": "/nix/store/x5b3k5pnynrjijw5bzvqrcbdhi5p81d3-bash-interactive-5.3p20"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "bash",
+      "broken": false,
+      "derivation": "/nix/store/kflvs7jxvlz0ipa80jxkn0dpgngnn53s-bash-interactive-5.3p20.drv",
+      "description": "GNU Bourne-Again Shell, the de facto standard shell on Linux (for interactive use)",
+      "install_id": "bash",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "bash-interactive-5.3p20",
+      "pname": "bash",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:41:47.735545Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "5.3p20",
+      "outputs_to_install": [
+        "man",
+        "man",
+        "out",
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "debug": "/nix/store/xibk76z2wy0xbr80rc5xvkfx2kc3f96h-bash-interactive-5.3p20-debug",
+        "dev": "/nix/store/07pismcxcb118acfjxq9kkiqvbrkry43-bash-interactive-5.3p20-dev",
+        "doc": "/nix/store/nsa9047yhdx1brxqrxsh9as4ak8nivcf-bash-interactive-5.3p20-doc",
+        "info": "/nix/store/wwy2y2jckfn1a0g97xl635qsck24ic0p-bash-interactive-5.3p20-info",
+        "man": "/nix/store/fvmqqdaz8fsccyvjfma0s76aivfpm9sq-bash-interactive-5.3p20-man",
+        "out": "/nix/store/lfm00fnq66xfgbn099vqckabyl5jllz6-bash-interactive-5.3p20"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "coreutils",
+      "broken": false,
+      "derivation": "/nix/store/hxf8a0911gbs62z0l8df93b4lcz62amz-coreutils-9.12.drv",
+      "description": "GNU Core Utilities",
+      "install_id": "coreutils",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "coreutils-9.12",
+      "pname": "coreutils",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T05:47:30.505772Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "9.12",
+      "outputs_to_install": [
+        "out",
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "info": "/nix/store/anb5viyiqh161jwma2agpfhb4j1arrbh-coreutils-9.12-info",
+        "out": "/nix/store/s3nhfncnjczym02h4rz782phaz760jr8-coreutils-9.12"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "coreutils",
+      "broken": false,
+      "derivation": "/nix/store/jnsqzhxxp033jiqgjsh6bhqyzl6rgbn3-coreutils-9.12.drv",
+      "description": "GNU Core Utilities",
+      "install_id": "coreutils",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "coreutils-9.12",
+      "pname": "coreutils",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:13:34.296212Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "9.12",
+      "outputs_to_install": [
+        "out",
+        "out",
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "debug": "/nix/store/74a6jzwpnvq11yfvigcsjawnkbnmn1zk-coreutils-9.12-debug",
+        "info": "/nix/store/mdj34p061d09vkij5mk46a2n7zzy61x7-coreutils-9.12-info",
+        "out": "/nix/store/jw0lpdmxdr8ixp4a0hmjpvdg4r6y7p35-coreutils-9.12"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "coreutils",
+      "broken": false,
+      "derivation": "/nix/store/dbmbyzj1j9sj5ap1jyr8d9rhppx50jn6-coreutils-9.12.drv",
+      "description": "GNU Core Utilities",
+      "install_id": "coreutils",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "coreutils-9.12",
+      "pname": "coreutils",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:41:47.747931Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "9.12",
+      "outputs_to_install": [
+        "out",
+        "out",
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "debug": "/nix/store/hc5f288zsm6qcj48rpba2dj8m8c0f6f6-coreutils-9.12-debug",
+        "info": "/nix/store/sg53rkfxqj38mir2k7zdn1g2dzpdmbqf-coreutils-9.12-info",
+        "out": "/nix/store/a50ml7za6h61m4mv4cdbvkl33c6sx5yn-coreutils-9.12"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
     {
       "attr_path": "curl",
       "broken": false,
@@ -235,6 +465,104 @@
         "debug": "/nix/store/qlbskmnhjz3p6f2iwf5h59r7v8d7dpm6-git-2.56.0-debug",
         "doc": "/nix/store/5a7dj71qa2r7k303v4f4j6b6kcdf1mff-git-2.56.0-doc",
         "out": "/nix/store/i2m3w4ly2w6grrmk1j59rb7zp09bssia-git-2.56.0"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "gnused",
+      "broken": false,
+      "derivation": "/nix/store/1xbk5j9kz81w8pz13i0w06i928pbmmr6-gnused-4.10.drv",
+      "description": "GNU sed, a batch stream editor",
+      "install_id": "gnused",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "gnused-4.10",
+      "pname": "gnused",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T05:47:30.546456Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "4.10",
+      "outputs_to_install": [
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "info": "/nix/store/g0r1yrfkfhsam01bqqna7iy5yygfv81x-gnused-4.10-info",
+        "out": "/nix/store/dxykv8pfmdhv179ywb3likqa6jvwxkaz-gnused-4.10"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "gnused",
+      "broken": false,
+      "derivation": "/nix/store/hq1wmkdzg47bi3fc83bqn1shg5j9byj2-gnused-4.10.drv",
+      "description": "GNU sed, a batch stream editor",
+      "install_id": "gnused",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "gnused-4.10",
+      "pname": "gnused",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:13:34.324602Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "4.10",
+      "outputs_to_install": [
+        "out",
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "info": "/nix/store/60ly165aikcpsa4z405j8vj6w3psgkrr-gnused-4.10-info",
+        "out": "/nix/store/5yv04945c9sx22h47ckz4vl3jkjqnmcb-gnused-4.10"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "gnused",
+      "broken": false,
+      "derivation": "/nix/store/1sdavh3a06cxw2fcn7z6d7i83nhrcb3n-gnused-4.10.drv",
+      "description": "GNU sed, a batch stream editor",
+      "install_id": "gnused",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "gnused-4.10",
+      "pname": "gnused",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:41:47.789978Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "4.10",
+      "outputs_to_install": [
+        "out",
+        "out",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "info": "/nix/store/73q7vpnfv6g148mfkqqp5rnq3qxdq1vr-gnused-4.10-info",
+        "out": "/nix/store/x275j18p7dx6kv7vfj45saapbhbljia4-gnused-4.10"
       },
       "system": "x86_64-linux",
       "group": "toplevel",
