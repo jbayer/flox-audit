@@ -176,7 +176,9 @@ else
     note "skipped fetch check (--quick)"
   elif command -v git >/dev/null; then
     TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-    if git -C "$TMP" init -q && git -C "$TMP" fetch -q --depth 1 "https://github.com/$REPO" "$REV" 2>/dev/null; then
+    # Never prompt. Saved git credentials still work, so private repos you can read are checked too.
+    if git -C "$TMP" init -q && GIT_TERMINAL_PROMPT=0 \
+         git -C "$TMP" fetch -q --depth 1 "https://github.com/$REPO" "$REV" </dev/null 2>/dev/null; then
       ok "commit $REV is fetchable from the publisher's repo"
     else
       note "could not fetch $REV from https://github.com/$REPO (private repo, or not on GitHub)"
