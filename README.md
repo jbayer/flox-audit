@@ -26,7 +26,7 @@ Tested on macOS (aarch64-darwin) and Ubuntu 24.04 (aarch64-linux).
 ### Build from source
 
 ```sh
-git clone <repo-url> flox-audit
+git clone https://github.com/jbayer/flox-audit
 cd flox-audit
 flox build
 export PATH="$PWD/result-flox-audit/bin:$PATH"
