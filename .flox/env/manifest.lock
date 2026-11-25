@@ -12,11 +12,17 @@
       "git": {
         "pkg-path": "git"
       },
+      "gnupg": {
+        "pkg-path": "gnupg"
+      },
       "gnused": {
         "pkg-path": "gnused"
       },
       "jq": {
         "pkg-path": "jq"
+      },
+      "xz": {
+        "pkg-path": "xz"
       }
     },
     "options": {},
@@ -28,9 +34,11 @@
           "gnused",
           "jq",
           "curl",
-          "git"
+          "git",
+          "gnupg",
+          "xz"
         ],
-        "version": "0.1.3",
+        "version": "0.3.0",
         "description": "flox audit: trace a package in a Flox environment back to its signed binary, build recipe and source"
       }
     }
@@ -352,6 +360,107 @@
       "priority": 5
     },
     {
+      "attr_path": "gnupg",
+      "broken": false,
+      "derivation": "/nix/store/vffzpxvy426gz4i9636gh7qx530hmigb-gnupg-2.4.9.drv",
+      "description": "Modern release of the GNU Privacy Guard, a GPL OpenPGP implementation",
+      "install_id": "gnupg",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "gnupg-2.4.9",
+      "pname": "gnupg",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T05:47:30.546405Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "2.4.9",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/apppj2lz5gcgxxfimfaa3sj81xil1m5x-gnupg-2.4.9-doc",
+        "info": "/nix/store/bjyv349s7ijg1kx0kbbar900wfsnj458-gnupg-2.4.9-info",
+        "man": "/nix/store/39sic1y0w3gwdmqydi15fm6qgpcvmbnl-gnupg-2.4.9-man",
+        "out": "/nix/store/kjpb0cciamap2mvkixs230gv1s9c5p6l-gnupg-2.4.9"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "gnupg",
+      "broken": false,
+      "derivation": "/nix/store/1cfzdcrpml650bvkwd0j0fdvi55r5xs9-gnupg-2.4.9.drv",
+      "description": "Modern release of the GNU Privacy Guard, a GPL OpenPGP implementation",
+      "install_id": "gnupg",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "gnupg-2.4.9",
+      "pname": "gnupg",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:13:34.324537Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "2.4.9",
+      "outputs_to_install": [
+        "man",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/cjnigrn40b0imhcydjp0j5hmr48rng6f-gnupg-2.4.9-doc",
+        "info": "/nix/store/4fqpfmg1z7m2rahi3gr0jn0k1ic56mm2-gnupg-2.4.9-info",
+        "man": "/nix/store/7qxyqssjzia8gcpcm72iypk3mdbcxymh-gnupg-2.4.9-man",
+        "out": "/nix/store/ifc8zhbh7gl81qs462f72m1r23513af0-gnupg-2.4.9"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "gnupg",
+      "broken": false,
+      "derivation": "/nix/store/8b1nh0iwscsl3725al0kn6jylvsaphrs-gnupg-2.4.9.drv",
+      "description": "Modern release of the GNU Privacy Guard, a GPL OpenPGP implementation",
+      "install_id": "gnupg",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "gnupg-2.4.9",
+      "pname": "gnupg",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:41:47.789917Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "2.4.9",
+      "outputs_to_install": [
+        "man",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/m0mixyz3mxjpn11sf44g5y1h78d20a0w-gnupg-2.4.9-doc",
+        "info": "/nix/store/pxb7c7fz9gb4rgczwsl8b6lk960hlag2-gnupg-2.4.9-info",
+        "man": "/nix/store/64v783lip1344s6zf5nl13w79dhp88k2-gnupg-2.4.9-man",
+        "out": "/nix/store/4flxcqwjv24a6vn0aw3kijqp6l8y89lw-gnupg-2.4.9"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
       "attr_path": "gnused",
       "broken": false,
       "derivation": "/nix/store/1xbk5j9kz81w8pz13i0w06i928pbmmr6-gnused-4.10.drv",
@@ -554,6 +663,115 @@
         "doc": "/nix/store/marqbp98z757v0w2gvs1xq1p1k3kmwmz-jq-1.8.2-doc",
         "man": "/nix/store/00sg1s16cq6vld8sg6hy6q0kpxdgqzbg-jq-1.8.2-man",
         "out": "/nix/store/i0j6x60pzdxn349nmi0flr2r35aygvkn-jq-1.8.2"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "xz",
+      "broken": false,
+      "derivation": "/nix/store/l37a5vsfgbh2yav1h0pmk3aqc3x63agf-xz-5.8.4.drv",
+      "description": "General-purpose data compression software, successor of LZMA",
+      "install_id": "xz",
+      "license": "[ GPL-2.0-or-later, LGPL-2.1-or-later ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "xz-5.8.4",
+      "pname": "xz",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T05:47:31.055813Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "5.8.4",
+      "outputs_to_install": [
+        "bin",
+        "bin",
+        "man"
+      ],
+      "outputs": {
+        "bin": "/nix/store/s1yvjiv8i4p446af349fz519rpdipq8m-xz-5.8.4-bin",
+        "dev": "/nix/store/igwzir1sim4d6bjbap3g1bkinmy2x7rl-xz-5.8.4-dev",
+        "doc": "/nix/store/ii7fdgl4560h1hchkqvzb51rj1h2yx97-xz-5.8.4-doc",
+        "man": "/nix/store/daa79qglsrczg1gsa8b9ph2n9plbvgwl-xz-5.8.4-man",
+        "out": "/nix/store/i1jf78p6dnca3zpk26ldljwir9wmb32l-xz-5.8.4"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "xz",
+      "broken": false,
+      "derivation": "/nix/store/jksdc1lfxsxd2ysxw9p0mpx57y86y97s-xz-5.8.4.drv",
+      "description": "General-purpose data compression software, successor of LZMA",
+      "install_id": "xz",
+      "license": "[ GPL-2.0-or-later, LGPL-2.1-or-later ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "xz-5.8.4",
+      "pname": "xz",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:13:34.806263Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "5.8.4",
+      "outputs_to_install": [
+        "bin",
+        "bin",
+        "bin",
+        "man",
+        "man"
+      ],
+      "outputs": {
+        "bin": "/nix/store/qzazz9irkqlkpbj3dcsbdgcdyv02yw1f-xz-5.8.4-bin",
+        "dev": "/nix/store/3580z5y5bsv6xrswnp5q9b50cljy5dfv-xz-5.8.4-dev",
+        "doc": "/nix/store/89c40ab3pwijbldchgfwi9gss9xp08b7-xz-5.8.4-doc",
+        "man": "/nix/store/v1yfh0wdcijpc2vmhk4yp8b8pvivdpqj-xz-5.8.4-man",
+        "out": "/nix/store/4cfiirzwpv2g6nnmkd4k98frdynzb7nb-xz-5.8.4"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "xz",
+      "broken": false,
+      "derivation": "/nix/store/imndpx613lwn8x382y1vvxwmvd46avr5-xz-5.8.4.drv",
+      "description": "General-purpose data compression software, successor of LZMA",
+      "install_id": "xz",
+      "license": "[ GPL-2.0-or-later, LGPL-2.1-or-later ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "name": "xz-5.8.4",
+      "pname": "xz",
+      "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+      "rev_count": 1125864,
+      "rev_date": "2026-11-21T04:16:29Z",
+      "scrape_date": "2026-11-22T06:41:48.159620Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "5.8.4",
+      "outputs_to_install": [
+        "bin",
+        "bin",
+        "bin",
+        "man",
+        "man"
+      ],
+      "outputs": {
+        "bin": "/nix/store/6mm66zaj29q72pcax4xhzgh4vwp6qy0y-xz-5.8.4-bin",
+        "dev": "/nix/store/dmj9dfzvp5ck21n0d626y3vz35s9gzik-xz-5.8.4-dev",
+        "doc": "/nix/store/yfvz9jfjp5l5x4pyawg53vh78aqjdbyz-xz-5.8.4-doc",
+        "man": "/nix/store/qkq4pc2dzhv5xpv8fim9y5r7x6p1pdf5-xz-5.8.4-man",
+        "out": "/nix/store/5n1qsd423q10dlscj3k4np04imfv4nm2-xz-5.8.4"
       },
       "system": "x86_64-linux",
       "group": "toplevel",

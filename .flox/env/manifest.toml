@@ -6,13 +6,15 @@ gnused.pkg-path = "gnused"
 jq.pkg-path = "jq"
 curl.pkg-path = "curl"
 git.pkg-path = "git"
+gnupg.pkg-path = "gnupg"
+xz.pkg-path = "xz"
 
 [build.flox-audit]
 description = "flox audit: trace a package in a Flox environment back to its signed binary, build recipe and source"
-version = "0.1.3"
+version = "0.3.0"
 command = '''
   mkdir -p $out/bin
   cp flox-audit $out/bin/flox-audit
   chmod +x $out/bin/flox-audit
 '''
-runtime-packages = ["coreutils", "gnused", "jq", "curl", "git"]
+runtime-packages = ["coreutils", "gnused", "jq", "curl", "git", "gnupg", "xz"]

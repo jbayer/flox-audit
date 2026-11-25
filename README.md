@@ -1,15 +1,16 @@
 # flox audit
 
-`flox audit` traces a package in a Flox environment back to where it came from: the signed binary, the build recipe, the pinned nixpkgs commit, and the upstream source. Each link is checked with a hash or a signature. Nothing is taken on trust.
+`flox audit` traces a package in a Flox environment back to where it came from: the signed binary, the build recipe, the pinned nixpkgs commit, the source code, and what the project itself published. Each link is checked with a hash or a signature, and the output says in plain words what could and couldn't be checked.
 
 ```
-binary on disk -> cache signature -> build recipe -> pinned nixpkgs commit -> upstream source
+binary on disk -> cache signature -> build recipe -> pinned nixpkgs commit -> source -> project's release signature
 ```
 
 ```sh
 $ flox audit jq
 ...
-flox audit: all checks passed for jq
+Summary
+   6 passed, 0 failed, 0 not checked, 0 can't check
 ```
 
 ## Requirements
@@ -17,7 +18,7 @@ flox audit: all checks passed for jq
 - Flox with beta features turned on (see below). Tested with Flox 1.20.0.
 - Nix 2.19 or newer on the host. `flox audit` uses the host's `nix` so it matches your Nix daemon. Tested on 2.31.6 (macOS and Linux) and 2.34.6 (Linux).
 
-`jq`, `curl`, `git`, `coreutils` and `gnused` come with the package, so they don't need to be installed on the machine.
+`jq`, `curl`, `git`, `gnupg`, `xz`, `coreutils` and `gnused` come with the package, so they don't need to be installed on the machine.
 
 Tested on macOS (aarch64-darwin) and Ubuntu 24.04 (aarch64-linux).
 
@@ -79,14 +80,15 @@ To turn beta features off again, run `flox config --delete features`. Note that 
 ## Usage
 
 ```
-flox audit [-d <dir> | -r <owner>/<name>] [--quick] <install-id>
+flox audit [-d <dir> | -r <owner>/<name>] [--quick] [--no-key-fetch] <install-id>
 ```
 
 | Option | What it does |
 |---|---|
 | `-d, --dir <dir>` | Environment directory. Defaults to the current directory. |
 | `-r, --remote <owner>/<name>` | A FloxHub environment you have activated on this machine before. |
-| `--quick` | Skip steps 5 and 6. These download nixpkgs and the package source, which takes longer. |
+| `--quick` | Skip steps 5 to 7. These download nixpkgs and the package source, which takes longer. |
+| `--no-key-fetch` | In step 7, don't look up signing keys online. Only keys in `FLOX_AUDIT_GPG_KEYS` are used. |
 | `-h, --help` | Show help. |
 | `-V, --version` | Show the version. |
 
@@ -111,18 +113,61 @@ flox audit --quick curl                    # signature and hash checks only
 
 ### Packages from nixpkgs
 
-1. **What the lockfile pins.** `.flox/env/manifest.lock` records the nixpkgs commit, the build recipe (`.drv`) and the output path for each system.
-2. **Who signed it.** Asks cache.nixos.org and cache.flox.dev for their record of that output and shows who signed it.
-3. **The signatures.** `nix store verify` checks the cache's signature using only the public keys listed below. It also checks the copy on your machine.
-4. **The copy on your machine.** Nix re-hashes every file in the store path and compares it with the signed hash. A modified file fails here.
-5. **The recipe.** Evaluates the package again from the pinned nixpkgs commit. The result has to match the lockfile's recipe and produce the exact output path that was signed.
-6. **The upstream source.** Downloads the source again from upstream and checks it against the hash in the recipe. Nix fails the download if the bytes don't match. The sha256 is also printed in hex so you can compare it with the project's published checksum.
+1. **What did Flox record?** `.flox/env/manifest.lock` records the nixpkgs commit, the build recipe (`.drv`) and the output path for each system.
+2. **Who built and signed it?** Asks cache.nixos.org and cache.flox.dev for their record of that output and shows who signed it.
+3. **Are those signatures genuine?** `nix store verify` checks the cache's signature using only the public keys listed below. It also checks the copy on your machine.
+4. **Has the copy on this machine been changed?** Nix re-hashes every file in the store path and compares it with the signed hash. A modified file fails here.
+5. **Does the recorded recipe really produce this build?** Evaluates the package again from the pinned nixpkgs commit. The result has to produce the exact output path that was signed.
+6. **Is the source code the same as when the recipe was written?** Downloads the source again and checks it against the hash in the recipe. Nix fails the download if the bytes don't match.
+7. **Did the project publish this exact source code?** Looks next to the download for a signature or checksum the project published, and checks the source against it. See [Step 7](#step-7-the-projects-own-release) below.
 
 ### Packages published to a Flox catalog
 
 Packages you or your team build and publish with Flox go through steps 1 to 4 the same way, using the local copy's signatures. Step 5 then shows the publisher's repository and commit, and checks that the commit can be fetched. Private repositories are checked if your saved git credentials can read them. `flox audit` never prompts for credentials.
 
 A package published to a catalog was built on the publisher's machine or CI. To check it end to end, rebuild it from that commit and compare the output path.
+
+## Step 7: the project's own release
+
+Step 6 proves the source hasn't changed since the nixpkgs recipe was written. Step 7 asks a different question: is that source what the project itself released? It uses the strongest evidence it can find:
+
+| Result | What it means |
+|---|---|
+| `PASS` with a key you chose | The project's signature is valid, using a key you supplied in `FLOX_AUDIT_GPG_KEYS`. The strongest check. |
+| `PASS` with a key from the project's site | `flox audit` found the signing key on the project's own site (for example the GNU keyring), or the signer publishes the same key on their own domain through a Web Key Directory. Good evidence, but someone who controlled that site could replace both the download and the key. |
+| `PASS (weak)` | The release is signed, but the key only came from a public key directory (keys.openpgp.org or keyserver.ubuntu.com), where anyone can upload a key under any name. It shows the file hasn't changed since it was signed, not who signed it. |
+| `PASS`, "by a weaker check" | The source matches a checksum file the project posted on the same server. Catches mistakes, not a compromised server. |
+| `FAIL` | The signature or checksum doesn't match, the project's signed checksum list doesn't include this file, or the signing key changed since an earlier audit. |
+| `NOT CHECKED` | The release is signed but no key could be found, or the signature names only a short key ID, which isn't safe to look up. |
+| `CAN'T CHECK` | The source is an archive GitHub generated (the project never published those exact bytes), or the project published no checksum or signature. |
+
+Keys are only ever looked up by the full fingerprint in the signature, and a key is only used if its fingerprint matches exactly.
+
+### Confirming keys yourself
+
+To get the strongest result, download each project's key from its own website and pass it in:
+
+```sh
+curl -fsSLo ~/keys/curl.asc https://daniel.haxx.se/mykey.asc
+FLOX_AUDIT_GPG_KEYS=~/keys/curl.asc flox audit curl
+```
+
+Separate several key files with `:`.
+
+### Remembered keys
+
+The first time `flox audit` sees a valid signature for a project, it saves the signing key's fingerprint in `~/.config/flox-audit/known-keys` (or `$FLOX_AUDIT_KNOWN_KEYS`). If a later release is signed with a different key, step 7 fails and shows both fingerprints. Projects do change keys, so check the project's announcements. If the change is expected, delete the old line from the file.
+
+### How often each result appears
+
+We sampled 105 common packages from nixos-25.11. About half (50) publish a signed release tarball. Without any keys supplied:
+
+- 23 matched a key on the project's own site (all the GNU packages, through the GNU keyring)
+- 1 matched through the signer's own domain (xz, via tukaani.org)
+- 21 found the key only in a public directory (`PASS (weak)`), including curl, openssl, openssh, git, python3, zlib and nginx
+- 5 can't be looked up safely because the signature names only a short key ID (cargo, rustc, file, flex, nmap)
+
+Most of the rest are GitHub-generated archives, which step 7 can't check.
 
 ## Reading the output
 
@@ -134,9 +179,9 @@ This is a note, not a failure. Two recipes can produce the same output when they
 
 Your Nix config may download from a mirror that signs with its own key. The store path and content hash are the same either way, and step 4 still re-hashes the contents.
 
-## Trusted keys
+## Trusted cache keys (steps 2 and 3)
 
-`flox audit` checks signatures against these public keys:
+`flox audit` checks binary cache signatures against these public keys:
 
 ```
 cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
@@ -152,5 +197,6 @@ FLOX_AUDIT_EXTRA_KEYS="mycompany-1:..." flox audit my-tool
 ## Limits
 
 - `-r` reads the lockfile Flox keeps for that environment under `~/.cache/flox/remote/`. Activate the environment once on the machine first.
-- Step 6 needs the package to have a single `src`. Packages built from several sources show a note and skip the check.
+- Steps 6 and 7 need the package to have a single `src`. Packages built from several sources show a note and skip the check.
+- Step 7 can't detect a project whose own release was compromised by a maintainer. Signatures prove who released a file, not that the code is safe. The 2024 xz backdoor was in a properly signed release.
 - `flox audit` checks one package at a time.

@@ -2,12 +2,12 @@
 # flox audit: trace a package in a Flox environment back to its source.
 set -euo pipefail
 
-VERSION="0.1.3"
+VERSION="0.3.0"
 
 usage() {
   cat <<'EOF'
 Trace a package in a Flox environment back to its signed binary, build recipe
-and source, checking each link with a hash or a signature.
+and source, checking each link with a fingerprint (hash) or a signature.
 
 Usage:
   flox audit [-d <dir> | -r <owner>/<name>] [--quick] <install-id>
@@ -15,193 +15,584 @@ Usage:
 Options:
   -d, --dir <dir>        Environment directory (default: current directory)
   -r, --remote <o>/<n>   A FloxHub environment you have used on this machine
-      --quick            Skip re-evaluating the recipe and re-downloading source
+      --quick            Skip steps 5-7 (they download the recipe and source)
+      --no-key-fetch     In step 7, don't look up signing keys online; use only
+                         the keys in FLOX_AUDIT_GPG_KEYS
   -h, --help             Show this help
   -V, --version          Show version
+
+Environment:
+  FLOX_AUDIT_GPG_KEYS    Public signing keys you trust for step 7, as one or
+                         more files separated by ':'. Get each project's key
+                         from its own website. Without this, step 7 looks the
+                         key up online and says how far it can be trusted.
+  FLOX_AUDIT_KNOWN_KEYS  Where step 7 remembers each project's signing key
+                         (default ~/.config/flox-audit/known-keys).
+  FLOX_AUDIT_EXTRA_KEYS  Extra Nix signing keys to trust in step 3.
 
 Examples:
   flox audit jq
   flox audit -d ~/src/myapp python3
-  flox audit -r jbayer/default flox-agent
+  FLOX_AUDIT_GPG_KEYS=~/keys/curl.asc flox audit curl
 
-Exit status is 0 only if every check that ran passed.
+Exit status is 0 if nothing failed, 1 if a check failed, 2 for usage errors.
 EOF
 }
 
-DIR="."; REMOTE=""; QUICK=0; PKG=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -d|--dir) DIR="${2:?-d needs a directory}"; shift 2 ;;
-    -r|--remote) REMOTE="${2:?-r needs owner/name}"; shift 2 ;;
-    --quick) QUICK=1; shift ;;
-    -h|--help) usage; exit 0 ;;
-    -V|--version) echo "flox-audit $VERSION"; exit 0 ;;
-    -*) echo "flox audit: unknown option $1" >&2; usage >&2; exit 2 ;;
-    *) PKG="$1"; shift ;;
-  esac
-done
-[ -n "$PKG" ] || { usage >&2; exit 2; }
-
-for tool in nix jq curl; do
-  command -v "$tool" >/dev/null || { echo "flox audit: '$tool' not found on PATH" >&2; exit 2; }
-done
-# Nix comes from the host so it matches the local Nix daemon. 'nix hash convert' needs 2.19+.
-MIN_NIX="2.19"
-NIX_VER=$(nix --version | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-if [ "$(printf '%s\n%s\n' "$MIN_NIX" "$NIX_VER" | sort -V | head -1)" != "$MIN_NIX" ]; then
-  echo "flox audit: needs Nix $MIN_NIX or newer (found ${NIX_VER:-unknown})" >&2; exit 2
-fi
 nixx() { nix --extra-experimental-features 'nix-command flakes' "$@"; }
 
-if [ -n "$REMOTE" ]; then
-  LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/flox/remote/$REMOTE/.flox/env/manifest.lock"
-  [ -f "$LOCK" ] || { echo "flox audit: no local lockfile for $REMOTE; run 'flox activate -r $REMOTE' once first" >&2; exit 2; }
-else
-  LOCK="$DIR/.flox/env/manifest.lock"
-  [ -f "$LOCK" ] || { echo "flox audit: no Flox environment lockfile at $LOCK" >&2; exit 2; }
-fi
+# ---------- output ----------
+KEY_FETCH=${KEY_FETCH:-1}
+PASSED=0; WEAK=0; FAILED=0; NOTCHK=0; CANT=0; CUR=""; SUMMARY=()
+line()   { local tag=$1 first=$2; shift 2
+           printf '   %-12s %s\n' "$tag" "$first"
+           local l; for l in "$@"; do printf '   %-12s %s\n' "" "$l"; done; }
+pass()   { PASSED=$((PASSED + 1)); line "PASS" "$@"; }
+weakpass() { PASSED=$((PASSED + 1)); WEAK=$((WEAK + 1)); line "PASS (weak)" "$@"; SUMMARY+=("PASS (weak)   $CUR. $1"); }
+fail()   { FAILED=$((FAILED + 1)); line "FAIL" "$@"; SUMMARY+=("FAIL          $CUR. $1"); }
+notchk() { NOTCHK=$((NOTCHK + 1)); line "NOT CHECKED" "$@"; SUMMARY+=("NOT CHECKED   $CUR. $1"); }
+cant()   { CANT=$((CANT + 1)); line "CAN'T CHECK" "$@"; SUMMARY+=("CAN'T CHECK   $CUR. $1"); }
+info()   { local l; for l in "$@"; do printf '   %s\n' "$l"; done; }
+step()   { CUR=$1; echo; echo "$1. $2"; }
 
-# Public keys this check trusts. Verify them against each publisher's docs.
-NIXOS_KEY='cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY='
-FLOX_KEY='flox-cache-public-1:7F4OyH7ZCnFhcze3fJdfyXYLQw/aV7GEed86nQ7IsOs='
-TRUSTED_KEYS="$NIXOS_KEY $FLOX_KEY ${FLOX_AUDIT_EXTRA_KEYS:-}"
-CACHES=(https://cache.nixos.org https://cache.flox.dev)
+signer_name() {
+  case "$1" in
+    cache.nixos.org-1)   echo "the NixOS project's build service ($1)" ;;
+    flox-cache-public-1) echo "Flox ($1)" ;;
+    floxhub-1)           echo "FloxHub ($1)" ;;
+    *)                   echo "$1" ;;
+  esac
+}
 
-FAILED=0
-ok()   { echo "   ok: $*"; }
-bad()  { echo "   FAIL: $*"; FAILED=1; }
-note() { echo "   $*"; }
-step() { echo; echo "== $*"; }
+# ---------- step 7 helpers ----------
+# Map Nix mirror:// URLs to a real download site that also hosts signatures.
+resolve_url() {
+  local u=$1
+  u=${u/mirror:\/\/gnu\//https://ftp.gnu.org/gnu/}
+  u=${u/https:\/\/ftpmirror.gnu.org\//https://ftp.gnu.org/gnu/}
+  u=${u/mirror:\/\/gnupg\//https://gnupg.org/ftp/gcrypt/}
+  u=${u/mirror:\/\/openbsd\//https://cdn.openbsd.org/pub/OpenBSD/}
+  u=${u/mirror:\/\/apache\//https://archive.apache.org/dist/}
+  u=${u/mirror:\/\/cpan\//https://www.cpan.org/}
+  u=${u/mirror:\/\/samba\//https://download.samba.org/pub/}
+  echo "$u"
+}
 
-SYSTEM=$(nixx eval --impure --raw --expr builtins.currentSystem)
-ENTRY=$(jq -c --arg p "$PKG" --arg s "$SYSTEM" \
-  '.packages[] | select(.install_id==$p and .system==$s)' "$LOCK")
-[ -n "$ENTRY" ] || { echo "flox audit: '$PKG' is not installed for $SYSTEM in $LOCK" >&2; exit 2; }
+# Download a small file next to the source. Fails on missing or HTML pages.
+fetch_side() {
+  local url=$1 out=$2
+  curl -sfL --max-time 20 -o "$out" "$url" 2>/dev/null || return 1
+  [ -s "$out" ] || return 1
+  ! head -c 512 "$out" | grep -qiE '<html|<!doctype|<head' || return 1
+}
 
-field() { jq -r "$1 // empty" <<<"$ENTRY"; }
-URL=$(field .locked_url)
-REV=$(field .rev)
-ATTR=$(field .attr_path)
-DRV=$(field .derivation)
-OUTNAME=$(jq -r '(.outputs_to_install // ["out"])[0]' <<<"$ENTRY")
-OUT=$(jq -r --arg o "$OUTNAME" '.outputs[$o]' <<<"$ENTRY")
-HASHPART=$(basename "$OUT" | cut -d- -f1)
-REPO=$(sed -E 's#^https://github.com/([^?]+).*#\1#' <<<"$URL")
-case "$REPO" in */nixpkgs) KIND=nixpkgs ;; *) KIND=published ;; esac
-
-step "1. What the lockfile pins"
-note "package : $(field .name) ($SYSTEM)"
-note "source  : $URL"
-note "recipe  : ${DRV:-unknown}"
-note "output  : $OUT"
-[ "$KIND" = nixpkgs ] && note "kind    : nixpkgs package" || note "kind    : published to a Flox catalog"
-
-step "2. Who signed it"
-SERVED_BY=""
-for c in "${CACHES[@]}"; do
-  NI=$(curl -sf "$c/$HASHPART.narinfo" || true)
-  [ -n "$NI" ] || continue
-  DERIVER=$(sed -n 's/^Deriver: //p' <<<"$NI")
-  SIGNER=$(sed -n 's/^Sig: //p' <<<"$NI" | cut -d: -f1 | paste -sd, - | sed 's/,/, /g')
-  note "$c: signed by $SIGNER"
-  if [ -n "$DRV" ] && [ "$DERIVER" != "$(basename "$DRV")" ]; then
-    # Not a failure: recipes that differ only in fetch details (e.g. source URLs)
-    # produce the same output path, and the cache remembers whichever was built first.
-    note "cache first built it from $DERIVER (lockfile recipe differs; same output, checked in step 5)"
+# Verify a signature using only the given keys (key files separated by ':').
+# Prints one of: GOOD <signing-fpr> <primary-fpr> <name>, BAD, UNKNOWN <keyid>, ERROR
+gpg_check() {
+  local keys=$1 sig=$2 data=${3:-} home st k
+  home=$(mktemp -d); chmod 700 "$home"
+  IFS=':' read -r -a keyfiles <<<"$keys"
+  for k in "${keyfiles[@]}"; do
+    [ -f "$k" ] && gpg --homedir "$home" --batch --quiet --import "$k" >/dev/null 2>&1 || true
+  done
+  if [ -n "$data" ]; then
+    st=$(gpg --homedir "$home" --batch --status-fd 1 --verify "$sig" "$data" 2>/dev/null || true)
   else
-    ok "cache record names the same recipe as the lockfile"
+    st=$(gpg --homedir "$home" --batch --status-fd 1 --verify "$sig" 2>/dev/null || true)
   fi
-  [ -n "$SERVED_BY" ] || SERVED_BY="$c"
-done
-if nixx path-info "$OUT" >/dev/null 2>&1; then
-  # Plain-text output: the --json format differs across Nix versions.
-  LOCAL_SIGS=$(nixx path-info --sigs "$OUT" | awk '{for (i = 2; i <= NF; i++) print $i}' \
-    | cut -d: -f1 | sort -u | paste -sd, - | sed 's/,/, /g')
-  note "local copy: signed by ${LOCAL_SIGS:-nobody}"
-fi
-[ -n "$SERVED_BY" ] || note "not on the public caches (expected for packages published to a Flox catalog)"
+  rm -rf "$home"
+  if grep -q '^\[GNUPG:\] BADSIG' <<<"$st"; then echo BAD
+  elif grep -q '^\[GNUPG:\] VALIDSIG' <<<"$st"; then
+    local sfpr pfpr name
+    sfpr=$(awk '/^\[GNUPG:\] VALIDSIG/ {print $3; exit}' <<<"$st")
+    pfpr=$(awk '/^\[GNUPG:\] VALIDSIG/ {print $NF; exit}' <<<"$st")
+    name=$(sed -n 's/^\[GNUPG:\] GOODSIG [0-9A-F]* //p' <<<"$st" | head -1)
+    echo "GOOD $sfpr $pfpr $name"
+  elif grep -q '^\[GNUPG:\] NO_PUBKEY' <<<"$st"; then
+    echo "UNKNOWN $(awk '/^\[GNUPG:\] NO_PUBKEY/ {print $3; exit}' <<<"$st")"
+  else echo ERROR
+  fi
+}
 
-step "3. Check signatures against public keys only"
-if [ -n "$SERVED_BY" ]; then
-  if nixx store verify --store "$SERVED_BY" --trusted-public-keys "$TRUSTED_KEYS" \
-       --sigs-needed 1 --no-contents "$OUT" >/dev/null 2>&1; then
-    ok "signature on $SERVED_BY verifies"
+# The full fingerprint of the key that made a signature, read from the signature
+# itself. Prints nothing if the signature only names a short key ID.
+sig_issuer_fpr() {
+  local sig=$1 t
+  t=$(mktemp)
+  if grep -q 'BEGIN PGP SIGNED MESSAGE' "$sig" 2>/dev/null; then
+    sed -n '/BEGIN PGP SIGNATURE/,/END PGP SIGNATURE/p' "$sig" >"$t"
   else
-    bad "no signature on $SERVED_BY from a trusted key"
+    cp "$sig" "$t"
   fi
-fi
-if nixx path-info "$OUT" >/dev/null 2>&1; then
-  if nixx store verify --trusted-public-keys "$TRUSTED_KEYS" \
-       --sigs-needed 1 --no-contents "$OUT" >/dev/null 2>&1; then
-    ok "local copy carries a signature from a trusted key"
+  gpg --list-packets "$t" 2>/dev/null \
+    | sed -n 's/.*issuer fpr v[0-9] \([0-9A-Fa-f]\{40,64\}\).*/\1/p' | head -1 | tr a-f A-F
+  rm -f "$t"
+}
+
+# Does a key file contain the key (or subkey) with this fingerprint?
+key_has_fpr() {
+  local file=$1 fpr=$2 home
+  home=$(mktemp -d); chmod 700 "$home"
+  gpg --homedir "$home" --batch --quiet --import "$file" >/dev/null 2>&1 || true
+  gpg --homedir "$home" --batch --with-colons --list-keys 2>/dev/null \
+    | awk -F: -v f="$fpr" '$1=="fpr" && $10==f {found=1} END {exit !found}'
+  local rc=$?
+  rm -rf "$home"; return $rc
+}
+
+# Look for a published key with this exact fingerprint.
+# Writes the key to <out> and prints "<strength>|<where it came from>", where
+# strength is "project" (the project's own site) or "directory" (a public key
+# directory anyone can upload to). Returns 1 if no matching key was found.
+fetch_key() {
+  local fpr=$1 out=$2 url=$3 t
+  t=$(mktemp)
+  # The GNU project publishes one keyring for all GNU maintainers.
+  case "$url" in https://ftp.gnu.org/gnu/*)
+    if curl -sfL --max-time 30 -o "$t" https://ftp.gnu.org/gnu/gnu-keyring.gpg 2>/dev/null \
+       && key_has_fpr "$t" "$fpr"; then
+      mv "$t" "$out"; echo "project|the GNU project's keyring (ftp.gnu.org/gnu/gnu-keyring.gpg)"; return 0
+    fi ;;
+  esac
+  if curl -sf --max-time 20 -o "$t" "https://keys.openpgp.org/vks/v1/by-fingerprint/$fpr" 2>/dev/null \
+     && key_has_fpr "$t" "$fpr"; then
+    mv "$t" "$out"; echo "directory|keys.openpgp.org"; return 0
+  fi
+  if curl -sf --max-time 20 -o "$t" "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x$fpr" 2>/dev/null \
+     && key_has_fpr "$t" "$fpr"; then
+    mv "$t" "$out"; echo "directory|keyserver.ubuntu.com"; return 0
+  fi
+  rm -f "$t"; return 1
+}
+
+# Web Key Directory: is the same key published on the signer's own email domain?
+# Prints the domain if so.
+wkd_confirms() {
+  local keyfile=$1 fpr=$2 home line addr hash local domain t
+  home=$(mktemp -d); chmod 700 "$home"; t=$(mktemp)
+  gpg --homedir "$home" --batch --quiet --import "$keyfile" >/dev/null 2>&1 || true
+  while read -r line; do
+    addr=${line#*@}; hash=${line%%@*}
+    domain=$addr
+    local uidmail
+    uidmail=$(gpg --homedir "$home" --batch --with-colons --list-keys 2>/dev/null \
+      | awk -F: '$1=="uid"{print $10}' | grep -oiE "[^<> ]+@$domain" | sed -n 1p || true)
+    local="${uidmail%@*}"
+    [ -n "$local" ] || continue
+    for u in "https://openpgpkey.$domain/.well-known/openpgpkey/$domain/hu/$hash?l=$local" \
+             "https://$domain/.well-known/openpgpkey/hu/$hash?l=$local"; do
+      if curl -sf --max-time 10 -o "$t" "$u" 2>/dev/null && [ -s "$t" ] && key_has_fpr "$t" "$fpr"; then
+        rm -rf "$home" "$t"; echo "$domain"; return 0
+      fi
+    done
+  done < <(gpg --homedir "$home" --batch --with-wkd-hash --list-keys 2>/dev/null \
+             | grep -oE '^ +[a-z0-9]{32}@[A-Za-z0-9.-]+$' | tr -d ' ' | sort -u)
+  rm -rf "$home" "$t"; return 1
+}
+
+# Signing keys seen on earlier audits: "<project> <primary fingerprint> <date>".
+known_keys_file() { echo "${FLOX_AUDIT_KNOWN_KEYS:-${XDG_CONFIG_HOME:-$HOME/.config}/flox-audit/known-keys}"; }
+pin_get() { local f; f=$(known_keys_file); [ -f "$f" ] && awk -v p="$1" '$1==p {print $2}' "$f" | tail -1 || true; }
+pin_save() {
+  local f; f=$(known_keys_file)
+  mkdir -p "$(dirname "$f")" 2>/dev/null && printf '%s %s %s\n' "$1" "$2" "$(date +%Y-%m-%d)" >>"$f" 2>/dev/null || true
+}
+short_fpr() { local f=$1; echo "${f:0:4}…${f: -4}"; }
+
+# step7 <project> <comma-separated urls> <local source file> <forge:true|false> <flat|recursive>
+step7() {
+  local project=$1 urls=$2 src=$3 forge=$4 mode=$5
+  step 7 "Did the $project project publish this exact source code?"
+  info "Step 6 shows the download hasn't changed since the recipe was written." \
+       "This step checks the recipe against what the $project project itself published."
+
+  if [ "$forge" = true ]; then
+    cant "The source is an archive GitHub generated, not a file the $project project published." \
+         "GitHub (or a similar site) builds these archives automatically from a git tag, so the" \
+         "project never published these exact bytes and there's nothing from them to compare" \
+         "with. Checking the git tag's signature would be the next step."
+    return
+  fi
+  if [ "$mode" != flat ] || [ ! -f "$src" ]; then
+    cant "The source isn't a single downloaded file." \
+         "There's no published fingerprint or signature that could match it."
+    return
+  fi
+
+  local u url="" tmp
+  IFS=',' read -r -a ulist <<<"$urls"
+  for u in "${ulist[@]}"; do
+    u=$(resolve_url "$u")
+    case "$u" in https://*|http://*) url=$u; break ;; esac
+  done
+  if [ -z "$url" ]; then
+    cant "flox audit can't look up signatures for this download site." \
+         "The recipe downloads from a mirror network: ${ulist[0]}"
+    return
+  fi
+
+  tmp=$(mktemp -d)
+  local dir=${url%/*} file=${url##*/} base=${url##*/}
+  base=${base%.gz}; base=${base%.xz}; base=${base%.bz2}; base=${base%.zst}
+  local sha256 sha512
+  sha256=$(sha256sum "$src" | cut -d' ' -f1)
+  sha512=$(sha512sum "$src" | cut -d' ' -f1)
+
+  # What the project published next to the download.
+  local sig="" sigurl="" signsum="" signsumurl="" sums="" sumsurl="" rawsign="" rawsignurl=""
+  local c
+  for c in "$url.asc" "$url.sig"; do
+    fetch_side "$c" "$tmp/sig" && { sig=$tmp/sig; sigurl=$c; break; }
+  done
+  fetch_side "$dir/$base.sign" "$tmp/raw.sign" && { rawsign=$tmp/raw.sign; rawsignurl=$dir/$base.sign; }
+  for c in "$dir/SHASUMS256.txt.asc" "$dir/SHA256SUMS.asc"; do
+    fetch_side "$c" "$tmp/sums.asc" && { signsum=$tmp/sums.asc; signsumurl=$c; break; }
+  done
+  for c in "$url.sha256" "$url.sha256sum" "$url.sha512" "$url.sha256.txt" "$dir/SHA256SUMS" \
+           "$dir/SHASUMS256.txt" "$dir/sha256sum.txt" "$dir/sha256sums.txt"; do
+    fetch_side "$c" "$tmp/sums" && grep -qiE '[0-9a-f]{64}' "$tmp/sums" && { sums=$tmp/sums; sumsurl=$c; break; }
+  done
+
+  local signedwhat="" signedurl="" signedfile="" r=""
+  [ -n "$sig" ] && { signedwhat="file"; signedurl=$sigurl; signedfile=$sig; }
+  [ -z "$signedwhat" ] && [ -n "$signsum" ] && { signedwhat="sums"; signedurl=$signsumurl; signedfile=$signsum; }
+  [ -z "$signedwhat" ] && [ -n "$rawsign" ] && { signedwhat="raw"; signedurl=$rawsignurl; signedfile=$rawsign; }
+
+  # Check the signature with the given keys. Sets r.
+  verify_with() {
+    case "$signedwhat" in
+      file) r=$(gpg_check "$1" "$sig" "$src") ;;
+      sums) r=$(gpg_check "$1" "$signsum")
+            if [[ $r == GOOD* ]] && ! grep -qi -e "$sha256" -e "$sha512" "$signsum"; then
+              r="NOTLISTED"
+            fi ;;
+      raw)  if xz -dc "$src" >"$tmp/raw" 2>/dev/null || gzip -dc "$src" >"$tmp/raw" 2>/dev/null; then
+              r=$(gpg_check "$1" "$rawsign" "$tmp/raw")
+            else r=ERROR; fi ;;
+    esac
+  }
+
+  # 1. A signature: check it with your keys first, then with a key found online.
+  local how="" from="" strength="" issuer="" wkd=""
+  if [ -n "$signedwhat" ] && command -v gpg >/dev/null; then
+    if [ -n "${FLOX_AUDIT_GPG_KEYS:-}" ]; then
+      verify_with "$FLOX_AUDIT_GPG_KEYS"
+      [[ $r == GOOD* ]] && how=yours
+    fi
+    if [ -z "$how" ] && [[ $r != BAD && $r != NOTLISTED ]] && [ "$KEY_FETCH" = 1 ]; then
+      issuer=$(sig_issuer_fpr "$signedfile")
+      if [ -n "$issuer" ] && from=$(fetch_key "$issuer" "$tmp/found.asc" "$url"); then
+        strength=${from%%|*}; from=${from#*|}
+        verify_with "$tmp/found.asc"
+        if [[ $r == GOOD* ]]; then
+          how=found
+          [ "$strength" = directory ] && wkd=$(wkd_confirms "$tmp/found.asc" "$issuer" || true)
+        fi
+      fi
+    fi
+  fi
+
+  if [[ $r == BAD ]]; then
+    fail "The $project project's signature does NOT match this source." \
+         "The file differs from what the project signed. Signature: $signedurl"
+    rm -rf "$tmp"; return
+  fi
+  if [[ $r == NOTLISTED ]]; then
+    fail "The $project project's signed checksum list doesn't include this source." \
+         "List: $signedurl"
+    rm -rf "$tmp"; return
+  fi
+  if [[ $r == GOOD* ]]; then
+    local rest=${r#GOOD } sfpr pfpr name pinned
+    sfpr=${rest%% *}; rest=${rest#* }; pfpr=${rest%% *}; name=${rest#* }
+    [ "$name" = "$pfpr" ] && name=""
+    pinned=$(pin_get "$project")
+    if [ -n "$pinned" ] && [ "$pinned" != "$pfpr" ]; then
+      fail "The $project project's signing key has changed since an earlier audit." \
+           "Earlier: $pinned" \
+           "Now:     $pfpr (${name:-unknown name})" \
+           "This can be a planned key change or a sign of tampering. Check the project's" \
+           "announcements, then remove the old line from $(known_keys_file) if it's expected." \
+           "Signature: $signedurl"
+      rm -rf "$tmp"; return
+    fi
+    local seen=""
+    [ -n "$pinned" ] && seen="It's the same key flox audit saw for $project on an earlier run."
+    [ -z "$pinned" ] && pin_save "$project" "$pfpr"
+    if [ "$how" = yours ]; then
+      pass "Yes. The $project project's signature is valid, using a key you chose to trust." \
+           "Signed by: ${name:-unknown name} (key $pfpr)" \
+           ${seen:+"$seen"} "Signature: $signedurl"
+    elif [ "$strength" = project ] || [ -n "$wkd" ]; then
+      local where=$from
+      [ -n "$wkd" ] && where="$from. The same key is published at $wkd, the signer's own domain"
+      local head="a key from the project's own site"
+      [ "$strength" = project ] || head="a key the signer also publishes on their own domain"
+      pass "Yes. The $project project's signature is valid, using $head." \
+           "Signed by: ${name:-unknown name} (key $pfpr)" \
+           "The key came from $where." \
+           "flox audit found this key itself; you haven't confirmed it. Someone who controlled" \
+           "that site could replace both the download and the key." \
+           ${seen:+"$seen"} "Signature: $signedurl"
+    else
+      weakpass "The source is signed by \"${name:-unknown name}\", using a key from a public directory." \
+               "Key $pfpr came from $from," \
+               "where anyone can upload a key under any name." \
+               "So this shows the release was signed and not changed since, but not that the" \
+               "$project project made the signature." \
+               ${seen:+"$seen"} \
+               "To confirm it, get the project's key from its own website and run again with" \
+               "FLOX_AUDIT_GPG_KEYS=/path/to/key.asc. Signature: $signedurl"
+    fi
+    rm -rf "$tmp"; return
+  fi
+
+  # 2. A checksum file on the same server: a weaker check.
+  if [ -n "$sums" ]; then
+    if grep -qi -e "$sha256" -e "$sha512" "$sums"; then
+      pass "Yes, by a weaker check: the source matches the checksum the $project project posted." \
+           "Checksum: $sumsurl" \
+           "This catches download and packaging mistakes. It's a weaker check than a" \
+           "signature: anyone who could change the download on that server could change" \
+           "this checksum too."
+    elif grep -q -- "$file" "$sums"; then
+      fail "The checksum the $project project posted does NOT match this source." \
+           "Checksum for $file: $sumsurl"
+    else
+      notchk "The $project project's checksum file doesn't list this source." \
+             "Checksum: $sumsurl"
+    fi
+    if [ -n "$signedwhat" ]; then
+      info "" "The project also signed this release, but flox audit couldn't find its key." \
+           "To check the signature as well, get the $project project's key from its own" \
+           "website and run again with FLOX_AUDIT_GPG_KEYS=/path/to/key.asc. Signature: $signedurl"
+    fi
+    rm -rf "$tmp"; return
+  fi
+
+  # 3. A signature, but no key to check it with.
+  if [ -n "$signedwhat" ]; then
+    local why="flox audit couldn't find its signing key online."
+    [ "$KEY_FETCH" = 1 ] || why="Looking up keys online is turned off (--no-key-fetch)."
+    if [ "$KEY_FETCH" = 1 ] && command -v gpg >/dev/null && [ -z "$(sig_issuer_fpr "$signedfile")" ]; then
+      why="The signature names only a short key ID, which isn't safe to look up."
+    fi
+    command -v gpg >/dev/null || why="gpg isn't installed."
+    notchk "The $project project signed this release, but the signature couldn't be checked." \
+           "$why" \
+           "Get the project's signing key from its own website, then run again with" \
+           "FLOX_AUDIT_GPG_KEYS=/path/to/key.asc. Signature: $signedurl"
+    rm -rf "$tmp"; return
+  fi
+
+  # 4. Nothing published.
+  cant "The $project project didn't publish a checksum or signature next to the download." \
+       "To check by hand, compare this fingerprint with anything the project publishes" \
+       "elsewhere: sha256 $sha256"
+  rm -rf "$tmp"
+}
+
+main() {
+  local DIR="." REMOTE="" QUICK=0 PKG=""
+  KEY_FETCH=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -d|--dir) DIR="${2:?-d needs a directory}"; shift 2 ;;
+      -r|--remote) REMOTE="${2:?-r needs owner/name}"; shift 2 ;;
+      --quick) QUICK=1; shift ;;
+      --no-key-fetch) KEY_FETCH=0; shift ;;
+      -h|--help) usage; exit 0 ;;
+      -V|--version) echo "flox-audit $VERSION"; exit 0 ;;
+      -*) echo "flox audit: unknown option $1" >&2; usage >&2; exit 2 ;;
+      *) PKG="$1"; shift ;;
+    esac
+  done
+  [ -n "$PKG" ] || { usage >&2; exit 2; }
+
+  local tool
+  for tool in nix jq curl; do
+    command -v "$tool" >/dev/null || { echo "flox audit: '$tool' not found on PATH" >&2; exit 2; }
+  done
+  # Nix comes from the host so it matches the local Nix daemon. 'nix hash convert' needs 2.19+.
+  local MIN_NIX="2.19" NIX_VER
+  NIX_VER=$(nix --version | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+  if [ "$(printf '%s\n%s\n' "$MIN_NIX" "$NIX_VER" | sort -V | head -1)" != "$MIN_NIX" ]; then
+    echo "flox audit: needs Nix $MIN_NIX or newer (found ${NIX_VER:-unknown})" >&2; exit 2
+  fi
+
+  local LOCK
+  if [ -n "$REMOTE" ]; then
+    LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/flox/remote/$REMOTE/.flox/env/manifest.lock"
+    [ -f "$LOCK" ] || { echo "flox audit: no local lockfile for $REMOTE; run 'flox activate -r $REMOTE' once first" >&2; exit 2; }
   else
-    note "local copy has no signature from the keys above (it may have come from a mirror"
-    note "with its own key; step 4 still re-hashes its contents)"
+    LOCK="$DIR/.flox/env/manifest.lock"
+    [ -f "$LOCK" ] || { echo "flox audit: no Flox environment lockfile at $LOCK" >&2; exit 2; }
   fi
-else
-  note "not installed on this machine yet"
-fi
 
-step "4. Re-hash the copy on this machine"
-if nixx path-info "$OUT" >/dev/null 2>&1; then
-  if nixx store verify "$OUT" >/dev/null 2>&1; then ok "contents match the signed hash"
-  else bad "contents do not match the hash Nix recorded"; fi
-else
-  note "skipped: not installed on this machine"
-fi
+  # Nix signing keys this check trusts. Verify them against each publisher's docs.
+  local NIXOS_KEY='cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY='
+  local FLOX_KEY='flox-cache-public-1:7F4OyH7ZCnFhcze3fJdfyXYLQw/aV7GEed86nQ7IsOs='
+  local TRUSTED_KEYS="$NIXOS_KEY $FLOX_KEY ${FLOX_AUDIT_EXTRA_KEYS:-}"
+  local CACHES=(https://cache.nixos.org https://cache.flox.dev)
 
-if [ "$KIND" = nixpkgs ]; then
-  REF="github:$REPO/$REV"
+  local SYSTEM ENTRY
+  SYSTEM=$(nixx eval --impure --raw --expr builtins.currentSystem)
+  ENTRY=$(jq -c --arg p "$PKG" --arg s "$SYSTEM" \
+    '.packages[] | select(.install_id==$p and .system==$s)' "$LOCK")
+  [ -n "$ENTRY" ] || { echo "flox audit: '$PKG' is not installed for $SYSTEM in $LOCK" >&2; exit 2; }
+
+  field() { jq -r "$1 // empty" <<<"$ENTRY"; }
+  local URL REV ATTR DRV OUTNAME OUT HASHPART REPO KIND PNAME PVER REVDATE
+  URL=$(field .locked_url); REV=$(field .rev); ATTR=$(field .attr_path); DRV=$(field .derivation)
+  PNAME=$(field .pname); PVER=$(field .version); REVDATE=$(field .rev_date); REVDATE=${REVDATE%%T*}
+  OUTNAME=$(jq -r '(.outputs_to_install // ["out"])[0]' <<<"$ENTRY")
+  OUT=$(jq -r --arg o "$OUTNAME" '.outputs[$o]' <<<"$ENTRY")
+  HASHPART=$(basename "$OUT" | cut -d- -f1)
+  REPO=$(sed -E 's#^https://github.com/([^?]+).*#\1#' <<<"$URL")
+  case "$REPO" in */nixpkgs) KIND=nixpkgs ;; *) KIND=published ;; esac
+  [ -n "$PNAME" ] || PNAME=$PKG
+
+  echo "flox audit: $PNAME $PVER ($SYSTEM)"
+  echo "Lockfile: $LOCK"
+
+  step 1 "What did Flox record for this package?"
+  if [ "$KIND" = nixpkgs ]; then
+    info "When $PNAME was added to this environment, Flox recorded exactly which build to use:" \
+         "  Recipe: $PNAME from nixpkgs (the Nix package collection), commit ${REV:0:12} from $REVDATE" \
+         "  Build:  $OUT"
+  else
+    info "When $PNAME was added to this environment, Flox recorded exactly which build to use:" \
+         "  Published from: https://github.com/$REPO, commit ${REV:0:12} from $REVDATE" \
+         "  Build:          $OUT"
+  fi
+  info "The rest of this report checks that record link by link."
+
+  step 2 "Who built and signed it?"
+  local SERVED_BY="" c NI DERIVER SIGNERS s
+  for c in "${CACHES[@]}"; do
+    NI=$(curl -sf "$c/$HASHPART.narinfo" || true)
+    [ -n "$NI" ] || continue
+    DERIVER=$(sed -n 's/^Deriver: //p' <<<"$NI")
+    SIGNERS=""
+    for s in $(sed -n 's/^Sig: //p' <<<"$NI" | cut -d: -f1); do
+      SIGNERS="${SIGNERS:+$SIGNERS, }$(signer_name "$s")"
+    done
+    info "${c#https://} has this exact build, signed by $SIGNERS."
+    if [ -n "$DRV" ] && [ "$DERIVER" != "$(basename "$DRV")" ]; then
+      info "  It was first built from a slightly different recipe that gives the identical" \
+           "  result (for example, the recipe lists different download mirrors). Step 5" \
+           "  confirms your recipe produces this same build."
+    fi
+    [ -n "$SERVED_BY" ] || SERVED_BY="$c"
+  done
+  [ -n "$SERVED_BY" ] || info "The public caches don't have this build. That's expected for packages" \
+                              "published to a Flox catalog; they're served from the catalog's own store."
+  local INSTALLED=false LOCAL_SIGS=""
+  if nixx path-info "$OUT" >/dev/null 2>&1; then
+    INSTALLED=true
+    LOCAL_SIGS=$(nixx path-info --sigs "$OUT" | awk '{for (i = 2; i <= NF; i++) print $i}' \
+      | cut -d: -f1 | sort -u | paste -sd, - | sed 's/,/, /g')
+    info "The copy on this machine is signed by: ${LOCAL_SIGS:-nobody}."
+  else
+    info "This build isn't on this machine yet."
+  fi
+
+  step 3 "Are those signatures genuine?"
+  info "Checked against these public keys only: cache.nixos.org-1, flox-cache-public-1${FLOX_AUDIT_EXTRA_KEYS:+, plus FLOX_AUDIT_EXTRA_KEYS}."
+  if [ -n "$SERVED_BY" ]; then
+    if nixx store verify --store "$SERVED_BY" --trusted-public-keys "$TRUSTED_KEYS" \
+         --sigs-needed 1 --no-contents "$OUT" >/dev/null 2>&1; then
+      pass "The signature on ${SERVED_BY#https://} is valid for this exact build."
+    else
+      fail "${SERVED_BY#https://} has no valid signature for this build from a trusted key."
+    fi
+  fi
+  if [ "$INSTALLED" = true ]; then
+    if nixx store verify --trusted-public-keys "$TRUSTED_KEYS" \
+         --sigs-needed 1 --no-contents "$OUT" >/dev/null 2>&1; then
+      pass "The copy on this machine carries a valid signature from a trusted key."
+    else
+      info "Note: the copy on this machine came from a mirror that signs with its own key," \
+           "which isn't on the list above. Step 4 checks its contents directly instead."
+    fi
+  fi
+
+  step 4 "Has the copy on this machine been changed?"
+  if [ "$INSTALLED" = true ]; then
+    if nixx store verify "$OUT" >/dev/null 2>&1; then
+      pass "No. Every file matches the fingerprint that was signed."
+    else
+      fail "Yes. Some files don't match what was signed." "Don't use this copy."
+    fi
+  else
+    cant "This build isn't on this machine, so there's no copy to check."
+  fi
+
   if [ "$QUICK" = 1 ]; then
-    step "5-6. Skipped (--quick)"
-  else
-    step "5. Re-evaluate the recipe from the pinned nixpkgs commit"
+    echo; echo "5-7. Skipped (--quick). These download the recipe and the source code."
+  elif [ "$KIND" = nixpkgs ]; then
+    local REF="github:$REPO/$REV" EVAL_DRV EVAL_OUT
+    step 5 "Does the recorded recipe really produce this build?"
+    info "Re-reading the recipe from nixpkgs commit ${REV:0:12} (this doesn't rebuild the program)."
     EVAL_DRV=$(nixx eval --raw "$REF#$ATTR.drvPath")
     EVAL_OUT=$(nixx eval --raw "$REF#$ATTR.$OUTNAME.outPath")
-    if [ "$EVAL_DRV" = "$DRV" ]; then ok "recipe matches lockfile: $(basename "$EVAL_DRV")"
-    else bad "evaluated recipe $EVAL_DRV, lockfile has $DRV"; fi
-    if [ "$EVAL_OUT" = "$OUT" ]; then ok "recipe produces the exact output that was signed: $(basename "$EVAL_OUT")"
-    else bad "recipe produces $EVAL_OUT, but the signed output is $OUT"; fi
-
-    step "6. Re-download the source from upstream and check its hash"
-    SRC=$(nixx eval --json "$REF#$ATTR.src" --apply \
-      's: { urls = s.urls or [ s.url or "?" ]; hash = s.outputHash; }' 2>/dev/null || true)
-    if [ -z "$SRC" ]; then
-      note "this package has no single 'src' to check"
+    if [ "$EVAL_OUT" = "$OUT" ]; then
+      pass "Yes. Following the recorded recipe gives exactly this build, so the signed" \
+           "program and the recipe Flox recorded belong together."
     else
-      note "source: $(jq -r '.urls[0]' <<<"$SRC")"
-      note "hash  : $(jq -r .hash <<<"$SRC")"
+      fail "No. The recorded recipe gives a different build." "$EVAL_OUT"
+    fi
+    [ "$EVAL_DRV" = "$DRV" ] || info "Note: the recipe file differs from the lockfile's ($EVAL_DRV)."
+
+    step 6 "Is the source code the same as when the recipe was written?"
+    local SRC SRC_URLS SRC_HASH SRC_MODE SRC_FORGE SRC_PATH
+    SRC=$(nixx eval --json "$REF#$ATTR.src" --apply \
+      's: { urls = s.urls or [ s.url or "" ]; hash = s.outputHash; mode = s.outputHashMode or "flat"; forge = (s ? rev) || (s ? gitRepoUrl); }' 2>/dev/null || true)
+    if [ -z "$SRC" ]; then
+      cant "The recipe doesn't download a single source." "There's nothing to re-download."
+      step 7 "Did the $PNAME project publish this exact source code?"
+      cant "There's no single downloaded source to compare with the project's releases."
+    else
+      SRC_URLS=$(jq -r '.urls | join(",")' <<<"$SRC")
+      SRC_HASH=$(jq -r .hash <<<"$SRC"); SRC_MODE=$(jq -r .mode <<<"$SRC"); SRC_FORGE=$(jq -r .forge <<<"$SRC")
+      info "The recipe downloads ${SRC_URLS%%,*}" \
+           "and expects this fingerprint: $SRC_HASH"
       nixx build --no-link "$REF#$ATTR.src" >/dev/null 2>&1 || true
       if nixx build --no-link --rebuild "$REF#$ATTR.src" >/dev/null 2>&1; then
-        ok "fresh download from upstream matches the pinned hash"
+        pass "Yes. We downloaded it again just now and it matches the fingerprint exactly."
       else
-        bad "fresh download from upstream did not match the pinned hash"
+        fail "No. Today's download doesn't match the fingerprint in the recipe." \
+             "The file on the server has changed since the recipe was written."
       fi
-      note "sha256 (hex), to compare with the project's published checksum:"
-      note "$(nixx hash convert --hash-algo sha256 --to base16 "$(jq -r .hash <<<"$SRC")")"
+      SRC_PATH=$(nixx eval --raw "$REF#$ATTR.src.outPath" 2>/dev/null || true)
+      step7 "$PNAME" "$SRC_URLS" "$SRC_PATH" "$SRC_FORGE" "$SRC_MODE"
     fi
-  fi
-else
-  step "5. Publisher's source"
-  note "repo   : https://github.com/$REPO"
-  note "commit : $REV ($(field .rev_date))"
-  if [ "$QUICK" = 1 ]; then
-    note "skipped fetch check (--quick)"
-  elif command -v git >/dev/null; then
-    TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-    # Never prompt. Saved git credentials still work, so private repos you can read are checked too.
-    if git -C "$TMP" init -q && GIT_TERMINAL_PROMPT=0 \
-         git -C "$TMP" fetch -q --depth 1 "https://github.com/$REPO" "$REV" </dev/null 2>/dev/null; then
-      ok "commit $REV is fetchable from the publisher's repo"
-    else
-      note "could not fetch $REV from https://github.com/$REPO (private repo, or not on GitHub)"
+  else
+    step 5 "Can we find the code it was built from?"
+    info "The publisher built this package from https://github.com/$REPO, commit ${REV:0:12}."
+    if command -v git >/dev/null; then
+      local TMP; TMP=$(mktemp -d)
+      # Never prompt. Saved git credentials still work, so private repos you can read are checked too.
+      if git -C "$TMP" init -q && GIT_TERMINAL_PROMPT=0 \
+           git -C "$TMP" fetch -q --depth 1 "https://github.com/$REPO" "$REV" </dev/null 2>/dev/null; then
+        pass "That commit exists in the publisher's repository."
+      else
+        notchk "Couldn't fetch that commit." "The repository may be private, or not on GitHub."
+      fi
+      rm -rf "$TMP"
     fi
+    echo; echo "6-7. Don't apply."
+    info "The publisher built this package on their own machine or CI, not from a public recipe." \
+         "To check it end to end, rebuild it from that commit and compare the build."
   fi
-  note "this build ran on the publisher's machine or CI; to check it end to end,"
-  note "rebuild from that commit and compare the output path"
-fi
 
-echo
-if [ "$FAILED" = 0 ]; then echo "flox audit: all checks passed for $PKG"
-else echo "flox audit: one or more checks FAILED for $PKG"; fi
-exit "$FAILED"
+  echo
+  echo "Summary: $PNAME $PVER"
+  echo "   $PASSED passed$([ "$WEAK" -gt 0 ] && echo " ($WEAK weak)"), $FAILED failed, $NOTCHK not checked, $CANT can't check"
+  local l; for l in "${SUMMARY[@]}"; do echo "   $l"; done
+  [ "$FAILED" = 0 ]
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
