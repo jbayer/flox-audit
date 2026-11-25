@@ -1,0 +1,16 @@
+schema-version = "1.10.0"
+
+[install]
+jq.pkg-path = "jq"
+curl.pkg-path = "curl"
+git.pkg-path = "git"
+
+[build.flox-audit]
+description = "flox audit: trace a package in a Flox environment back to its signed binary, build recipe and source"
+version = "0.1.0"
+command = '''
+  mkdir -p $out/bin
+  cp flox-audit $out/bin/flox-audit
+  chmod +x $out/bin/flox-audit
+'''
+runtime-packages = ["jq", "curl", "git"]

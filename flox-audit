@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# flox audit: trace a package in a Flox environment back to its source.
+set -euo pipefail
+
+VERSION="0.1.0"
+
+usage() {
+  cat <<'EOF'
+Trace a package in a Flox environment back to its signed binary, build recipe
+and source, checking each link with a hash or a signature.
+
+Usage:
+  flox audit [-d <dir> | -r <owner>/<name>] [--quick] <install-id>
+
+Options:
+  -d, --dir <dir>        Environment directory (default: current directory)
+  -r, --remote <o>/<n>   A FloxHub environment you have used on this machine
+      --quick            Skip re-evaluating the recipe and re-downloading source
+  -h, --help             Show this help
+  -V, --version          Show version
+
+Examples:
+  flox audit jq
+  flox audit -d ~/src/myapp python3
+  flox audit -r jbayer/default flox-agent
+
+Exit status is 0 only if every check that ran passed.
+EOF
+}
+
+DIR="."; REMOTE=""; QUICK=0; PKG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d|--dir) DIR="${2:?-d needs a directory}"; shift 2 ;;
+    -r|--remote) REMOTE="${2:?-r needs owner/name}"; shift 2 ;;
+    --quick) QUICK=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -V|--version) echo "flox-audit $VERSION"; exit 0 ;;
+    -*) echo "flox audit: unknown option $1" >&2; usage >&2; exit 2 ;;
+    *) PKG="$1"; shift ;;
+  esac
+done
+[ -n "$PKG" ] || { usage >&2; exit 2; }
+
+for tool in nix jq curl; do
+  command -v "$tool" >/dev/null || { echo "flox audit: '$tool' not found on PATH" >&2; exit 2; }
+done
+nixx() { nix --extra-experimental-features 'nix-command flakes' "$@"; }
+
+if [ -n "$REMOTE" ]; then
+  LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/flox/remote/$REMOTE/.flox/env/manifest.lock"
+  [ -f "$LOCK" ] || { echo "flox audit: no local lockfile for $REMOTE; run 'flox activate -r $REMOTE' once first" >&2; exit 2; }
+else
+  LOCK="$DIR/.flox/env/manifest.lock"
+  [ -f "$LOCK" ] || { echo "flox audit: no Flox environment lockfile at $LOCK" >&2; exit 2; }
+fi
+
+# Public keys this check trusts. Verify them against each publisher's docs.
+NIXOS_KEY='cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY='
+FLOX_KEY='flox-cache-public-1:7F4OyH7ZCnFhcze3fJdfyXYLQw/aV7GEed86nQ7IsOs='
+TRUSTED_KEYS="$NIXOS_KEY $FLOX_KEY ${FLOX_AUDIT_EXTRA_KEYS:-}"
+CACHES=(https://cache.nixos.org https://cache.flox.dev)
+
+FAILED=0
+ok()   { echo "   ok: $*"; }
+bad()  { echo "   FAIL: $*"; FAILED=1; }
+note() { echo "   $*"; }
+step() { echo; echo "== $*"; }
+
+SYSTEM=$(nixx eval --impure --raw --expr builtins.currentSystem)
+ENTRY=$(jq -c --arg p "$PKG" --arg s "$SYSTEM" \
+  '.packages[] | select(.install_id==$p and .system==$s)' "$LOCK")
+[ -n "$ENTRY" ] || { echo "flox audit: '$PKG' is not installed for $SYSTEM in $LOCK" >&2; exit 2; }
+
+field() { jq -r "$1 // empty" <<<"$ENTRY"; }
+URL=$(field .locked_url)
+REV=$(field .rev)
+ATTR=$(field .attr_path)
+DRV=$(field .derivation)
+OUTNAME=$(jq -r '(.outputs_to_install // ["out"])[0]' <<<"$ENTRY")
+OUT=$(jq -r --arg o "$OUTNAME" '.outputs[$o]' <<<"$ENTRY")
+HASHPART=$(basename "$OUT" | cut -d- -f1)
+REPO=$(sed -E 's#^https://github.com/([^?]+).*#\1#' <<<"$URL")
+case "$REPO" in */nixpkgs) KIND=nixpkgs ;; *) KIND=published ;; esac
+
+step "1. What the lockfile pins"
+note "package : $(field .name) ($SYSTEM)"
+note "source  : $URL"
+note "recipe  : ${DRV:-unknown}"
+note "output  : $OUT"
+[ "$KIND" = nixpkgs ] && note "kind    : nixpkgs package" || note "kind    : published to a Flox catalog"
+
+step "2. Who signed it"
+SERVED_BY=""
+for c in "${CACHES[@]}"; do
+  NI=$(curl -sf "$c/$HASHPART.narinfo" || true)
+  [ -n "$NI" ] || continue
+  DERIVER=$(sed -n 's/^Deriver: //p' <<<"$NI")
+  SIGNER=$(sed -n 's/^Sig: //p' <<<"$NI" | cut -d: -f1 | paste -sd, -)
+  note "$c: signed by $SIGNER"
+  if [ -n "$DRV" ] && [ "$DERIVER" != "$(basename "$DRV")" ]; then
+    bad "cache says recipe $DERIVER, lockfile says $(basename "$DRV")"
+  else
+    ok "cache record names the same recipe as the lockfile"
+  fi
+  [ -n "$SERVED_BY" ] || SERVED_BY="$c"
+done
+if nixx path-info "$OUT" >/dev/null 2>&1; then
+  LOCAL_SIGS=$(nixx path-info --json "$OUT" | jq -r '[.. | .signatures? // empty | .[]] | map(split(":")[0]) | unique | join(", ")')
+  note "local copy: signed by ${LOCAL_SIGS:-nobody}"
+fi
+[ -n "$SERVED_BY" ] || note "not on the public caches (expected for packages published to a Flox catalog)"
+
+step "3. Check signatures against public keys only"
+if [ -n "$SERVED_BY" ]; then
+  if nixx store verify --store "$SERVED_BY" --trusted-public-keys "$TRUSTED_KEYS" \
+       --sigs-needed 1 --no-contents "$OUT" >/dev/null 2>&1; then
+    ok "signature on $SERVED_BY verifies"
+  else
+    bad "no signature on $SERVED_BY from a trusted key"
+  fi
+fi
+if nixx path-info "$OUT" >/dev/null 2>&1; then
+  if nixx store verify --trusted-public-keys "$TRUSTED_KEYS" \
+       --sigs-needed 1 --no-contents "$OUT" >/dev/null 2>&1; then
+    ok "local copy carries a signature from a trusted key"
+  else
+    note "local copy has no signature from the keys above (it may have come from a mirror"
+    note "with its own key; step 4 still re-hashes its contents)"
+  fi
+else
+  note "not installed on this machine yet"
+fi
+
+step "4. Re-hash the copy on this machine"
+if nixx path-info "$OUT" >/dev/null 2>&1; then
+  if nixx store verify "$OUT" >/dev/null 2>&1; then ok "contents match the signed hash"
+  else bad "contents do not match the hash Nix recorded"; fi
+else
+  note "skipped: not installed on this machine"
+fi
+
+if [ "$KIND" = nixpkgs ]; then
+  REF="github:$REPO/$REV"
+  if [ "$QUICK" = 1 ]; then
+    step "5-6. Skipped (--quick)"
+  else
+    step "5. Re-evaluate the recipe from the pinned nixpkgs commit"
+    EVAL_DRV=$(nixx eval --raw "$REF#$ATTR.drvPath")
+    if [ "$EVAL_DRV" = "$DRV" ]; then ok "$REF#$ATTR gives $(basename "$EVAL_DRV")"
+    else bad "evaluated $EVAL_DRV, lockfile has $DRV"; fi
+
+    step "6. Re-download the source from upstream and check its hash"
+    SRC=$(nixx eval --json "$REF#$ATTR.src" --apply \
+      's: { urls = s.urls or [ s.url or "?" ]; hash = s.outputHash; }' 2>/dev/null || true)
+    if [ -z "$SRC" ]; then
+      note "this package has no single 'src' to check"
+    else
+      note "source: $(jq -r '.urls[0]' <<<"$SRC")"
+      note "hash  : $(jq -r .hash <<<"$SRC")"
+      nixx build --no-link "$REF#$ATTR.src" >/dev/null 2>&1 || true
+      if nixx build --no-link --rebuild "$REF#$ATTR.src" >/dev/null 2>&1; then
+        ok "fresh download from upstream matches the pinned hash"
+      else
+        bad "fresh download from upstream did not match the pinned hash"
+      fi
+      note "sha256 (hex), to compare with the project's published checksum:"
+      note "$(nixx hash convert --hash-algo sha256 --to base16 "$(jq -r .hash <<<"$SRC")")"
+    fi
+  fi
+else
+  step "5. Publisher's source"
+  note "repo   : https://github.com/$REPO"
+  note "commit : $REV ($(field .rev_date))"
+  if [ "$QUICK" = 1 ]; then
+    note "skipped fetch check (--quick)"
+  elif command -v git >/dev/null; then
+    TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+    if git -C "$TMP" init -q && git -C "$TMP" fetch -q --depth 1 "https://github.com/$REPO" "$REV" 2>/dev/null; then
+      ok "commit $REV is fetchable from the publisher's repo"
+    else
+      note "could not fetch $REV from https://github.com/$REPO (private repo, or not on GitHub)"
+    fi
+  fi
+  note "this build ran on the publisher's machine or CI; to check it end to end,"
+  note "rebuild from that commit and compare the output path"
+fi
+
+echo
+if [ "$FAILED" = 0 ]; then echo "flox audit: all checks passed for $PKG"
+else echo "flox audit: one or more checks FAILED for $PKG"; fi
+exit "$FAILED"
