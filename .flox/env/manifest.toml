@@ -11,10 +11,12 @@ xz.pkg-path = "xz"
 
 [build.flox-audit]
 description = "flox audit: trace a package in a Flox environment back to its signed binary, build recipe and source"
-version = "0.3.2"
+version = "0.3.3"
 command = '''
   mkdir -p $out/bin
   cp flox-audit $out/bin/flox-audit
   chmod +x $out/bin/flox-audit
+  mkdir -p $out/share/doc/flox-audit
+  cp LICENSE $out/share/doc/flox-audit/LICENSE
 '''
 runtime-packages = ["coreutils", "gnused", "jq", "curl", "git", "gnupg", "xz"]

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # flox audit: trace a package in a Flox environment back to its source.
+# Copyright (c) 2026 James Bayer. MIT License; see LICENSE.
 set -euo pipefail
 
-VERSION="0.3.2"
+VERSION="0.3.3"
 
 usage() {
   cat <<'EOF'
@@ -10,7 +11,11 @@ Trace a package in a Flox environment back to its signed binary, build recipe
 and source, checking each link with a fingerprint (hash) or a signature.
 
 Usage:
-  flox audit [-d <dir> | -r <owner>/<name>] [--quick] <install-id>
+  flox audit [-d <dir> | -r <owner>/<name>] [--quick] <package>
+
+<package> is a package installed in the environment, named either the way it
+appears in the manifest's [install] section (jq) or by the package it was
+installed from (myorg/mytool for a FloxHub catalog package).
 
 Options:
   -d, --dir <dir>        Environment directory (default: current directory)
@@ -32,6 +37,7 @@ Environment:
 
 Examples:
   flox audit jq
+  flox audit myorg/mytool
   flox audit -d ~/src/myapp python3
   FLOX_AUDIT_GPG_KEYS=~/keys/curl.asc flox audit curl
 
@@ -582,6 +588,24 @@ main() {
   local FLOX_KEY='flox-cache-public-1:7F4OyH7ZCnFhcze3fJdfyXYLQw/aV7GEed86nQ7IsOs='
   local TRUSTED_KEYS="$NIXOS_KEY $FLOX_KEY ${FLOX_AUDIT_EXTRA_KEYS:-}"
   local CACHES=(https://cache.nixos.org https://cache.flox.dev)
+
+  # The package can be named by its install ID (the name in [install]) or by the
+  # package path it was installed from: a FloxHub catalog package (myorg/mytool)
+  # or a nixpkgs path (python3Packages.requests).
+  local IDS
+  IDS=$(jq -r --arg p "$PKG" '(.manifest.install // {}) as $m
+    | if $m | has($p) then $p
+      else [$m | to_entries[] | select(.value["pkg-path"]? == $p) | .key] | .[] end' "$LOCK")
+  case "$IDS" in
+    "") echo "flox audit: no package '$PKG' in $LOCK" >&2
+        echo "Installed packages (name, then the package path it came from):" >&2
+        jq -r '(.manifest.install // {}) | to_entries[]
+               | "  \(.key)\(if .value["pkg-path"]? and .value["pkg-path"] != .key then "  (\(.value["pkg-path"]))" else "" end)"' "$LOCK" >&2
+        exit 2 ;;
+    *$'\n'*) echo "flox audit: '$PKG' is installed more than once; name one of these instead:" >&2
+             sed 's/^/  /' <<<"$IDS" >&2; exit 2 ;;
+  esac
+  PKG=$IDS
 
   local SYSTEM ENTRY
   SYSTEM=$(nixx eval --impure --raw --expr builtins.currentSystem)

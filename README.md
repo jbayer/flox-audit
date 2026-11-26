@@ -80,7 +80,7 @@ To turn beta features off again, run `flox config --delete features`. Note that 
 ## Usage
 
 ```
-flox audit [-d <dir> | -r <owner>/<name>] [--quick] [--no-key-fetch] <install-id>
+flox audit [-d <dir> | -r <owner>/<name>] [--quick] [--no-key-fetch] <package>
 ```
 
 | Option | What it does |
@@ -92,10 +92,11 @@ flox audit [-d <dir> | -r <owner>/<name>] [--quick] [--no-key-fetch] <install-id
 | `-h, --help` | Show help. |
 | `-V, --version` | Show the version. |
 
-`<install-id>` is the name of the package in your manifest's `[install]` section.
+`<package>` is a package installed in the environment. Name it the way it appears in your manifest's `[install]` section (`jq`), or by the package it was installed from (`myorg/mytool` for a package from a FloxHub catalog, or a nixpkgs path such as `python3Packages.requests`). It has to be installed already: `flox audit` checks what the environment's lockfile recorded.
 
 ```sh
 flox audit jq                              # environment in the current directory
+flox audit myorg/mytool                    # a FloxHub catalog package, by its full name
 flox audit -d ~/src/myapp python3          # another environment
 flox audit -r jbayer/default flox-agent    # a FloxHub environment
 flox audit --quick curl                    # signature and hash checks only
@@ -212,3 +213,7 @@ FLOX_AUDIT_EXTRA_KEYS="mycompany-1:..." flox audit my-tool
 - Steps 6 and 7 need the package to have a single `src`. Packages built from several sources show a note and skip the check.
 - Step 7 can't detect a project whose own release was compromised by a maintainer. Signatures prove who released a file, not that the code is safe. The 2024 xz backdoor was in a properly signed release.
 - `flox audit` checks one package at a time.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
