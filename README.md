@@ -16,7 +16,7 @@ Summary
 ## Requirements
 
 - Flox with beta features turned on (see below). Tested with Flox 1.20.0.
-- Nix 2.19 or newer on the host. `flox audit` uses the host's `nix` so it matches your Nix daemon. Tested on 2.31.6 (macOS and Linux) and 2.34.6 (Linux).
+- Nix on the host. Installing Flox also typically installs Nix. `flox audit` uses the host's `nix` so it matches your Nix daemon.
 
 `jq`, `curl`, `git`, `gnupg`, `xz`, `coreutils` and `gnused` come with the package, so they don't need to be installed on the machine.
 
